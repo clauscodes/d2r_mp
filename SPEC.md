@@ -1,137 +1,116 @@
-# D2R Rooms — SPEC (draft v0.1, 2026-10-22)
+# D2R Rooms — SPEC (v0.2, 2026-10-22)
 
-A small helper that lets D2R players (modded through D2RLoader) play together
-over the game's own **TCP/IP** multiplayer without port forwarding or sharing
-IP addresses: a room list, quick join by code, and a relay.
+A board of open Diablo II: Resurrected **TCP/IP** games. A host publishes a
+room; other players see it in a list (who plays, class, level, act, which mod)
+or find it by a short code, get the host's address and connect their game
+**directly** to it. No game traffic passes through the board.
 
-Status: server, reference helper (`tools/helper.py`) and tests built; launcher
-tab and roster block not built.
+Status: built — Cloudflare Worker + D1 (`worker/`), web page, reference helper
+(`tools/helper.py`), tests. Not built: the launcher tab, the roster block in
+the mods' plugins, UPnP port opening.
 
 ## 1. Goals and non-goals
 
 Goals
-- A player creates a **room**; others see it in a **list** (who plays, which
-  mod, class, level, act, difficulty) or join by a **short code**.
-- Works for **both VR mods** — D2R VR Authentic (`mods\D2R-VR`, mod id `d2r-vr`)
-  and D2R VR Unleashed (`mods\D2R-PCVR`, mod id `d2r-pcvr`) — and for a game
-  without a VR mod. Every player is labelled with the mod they play.
-- No router setup: both sides only make **outgoing** connections (HTTPS/WSS 443).
-- No player IP address is ever shown to other players or kept on disk.
+- Create a room, list open rooms, join by list or by code.
+- Works for **both VR mods** — D2R VR Authentic (mod id `d2r-vr`) and D2R VR
+  Unleashed (`d2r-pcvr`) — and for a game without a VR mod (`none`). Every
+  player is labelled with the mod they play.
+- Runs on a **free** platform with no server to look after.
 
 Non-goals
-- Never touches Battle.net or the game's own servers; never changes game data,
-  saves or game rules. The game runs its own TCP/IP host/join exactly as with a
-  LAN or VPN; the relay only carries those bytes.
-- No accounts, no chat, no matchmaking by skill.
+- Never touches Battle.net or the game's own servers, game data, saves or rules.
+  The game runs its own TCP/IP host/join exactly as on a LAN.
+- No relay of game traffic, no accounts, no chat.
 
 ## 2. Independence
 
-D2R Rooms is an independent project, not part of any mod:
-- its own repository, its own licence (MIT);
-- its own server on its own hosting and domain (placeholder below:
-  `rooms.example.net`); no other project's domain, key or API in the code;
-- the server address is configuration (`server_url`), not compiled in, so a
-  community can run its own server.
+D2R Rooms is an independent project, not part of any mod: its own repository,
+its own licence (MIT), its own Cloudflare account and address. The mods and the
+launcher are clients of the protocol in §5, like any other client.
 
-The mods and the launcher are **clients** of a documented protocol (§5), the
-same way any client could be.
+## 3. How a game is found
 
-## 3. How a connection runs
+1. The **host** creates a room — from the web page or the helper/launcher. The
+   board takes the host's address from the connection (`CF-Connecting-IP`), or
+   the host gives one (a VPN address such as Radmin VPN / ZeroTier, or a name).
+   The host hosts a TCP/IP game in D2R as usual.
+2. The host's client sends a **heartbeat** every 60 s (with the roster, §4).
+   A room without a heartbeat for 180 s disappears from every answer.
+3. A **player** picks the room or types its code and presses Join. The board
+   answers with the host's address; in D2R: Play → TCP/IP → Join Game → that
+   address.
 
-```
- Host PC                                   Server                        Joiner PC
- D2R "Host game" ← tcp 127.0.0.1:4000 ←  helper ⇄ WSS ⇄ relay ⇄ WSS ⇄ helper ← tcp 127.0.0.1:4000 ← D2R "Join: 127.0.0.1"
-```
+The host must be reachable: an open port (D2R TCP/IP, believed 4000/tcp), or
+everyone in one VPN. The board does not change that. A later helper step can
+open the port by UPnP.
 
-1. **Host** clicks *Create room* in the helper (the launcher tab, §6). The helper
-   registers the room (`POST /api/rooms`) and keeps a control WebSocket open.
-   The player hosts a TCP/IP game in D2R as usual.
-2. **Joiner** picks the room in the list or types its code. The helper asks for
-   a tunnel (`POST /api/join`), opens its data WebSocket and starts listening on
-   `127.0.0.1:4000`. In D2R the joiner joins TCP/IP game `127.0.0.1`.
-3. The server tells the host's helper about the new tunnel on the control
-   socket; the host's helper opens its own data WebSocket for that tunnel and a
-   TCP connection to its local game at `127.0.0.1:4000`.
-4. The relay pipes binary frames between the two data sockets of the tunnel.
-   Either side closing closes the other.
+Addresses: the public list never shows the host's address; Join hands it out
+(after the password when the room has one). D2R TCP/IP is IPv4, so the helper
+talks to the board over IPv4; an IPv6 address is flagged (`address_ipv6`) and
+the page tells the host to enter an IPv4/VPN address.
 
-One tunnel per joiner (D2R allows up to 8 players → at most 7 tunnels per room).
+## 4. What the list shows
 
-To verify before building (§9): the game's TCP/IP port and whether it can be
-changed; whether the joiner's game itself needs a local port that clashes.
+Room: name, code, difficulty, Softcore/Hardcore, act, players `n/max`, lock,
+the host's mod + version.
 
-## 4. What the room list shows
+Player row: **name, class, level, act + area**, mod label, VR or not.
 
-Room: name, difficulty, Softcore/Hardcore, players `n/8`, password lock,
-host's mod + version, server ping.
+Where it comes from:
+- **Host roster** (preferred): a plugin in the host's game sees everyone in the
+  game and writes the roster block (§7); the host's client sends it with the
+  heartbeat. The roster is then the truth: the host's own entry (`self`) gets
+  the room's mod, the others the mod of the joiner who gave the same name.
+- **Without a roster**: the character the host typed when creating the room,
+  and joiners who named their character when joining (shown 30 min).
 
-Player row: **character name, class, level, act + area**, mod label
-(`Authentic 0.175` / `Unleashed 0.3.19` / `no VR mod`), VR or flat.
+Mixed mods: the list shows each player's mod; Join answers `mod_mismatch` when
+the player's mod differs from the host's (a warning, not a block).
 
-Where the data comes from:
-- **Host roster (preferred).** In a TCP/IP game the host's game knows every
-  player in it. A plugin in the host's game writes the roster to the
-  *roster block* (§7); the host's helper sends it on the control socket every
-  5 s. So one plugin on the host is enough for the whole list.
-- **Self report.** Each joiner's helper reports its own mod/version (it knows
-  which mod it launched) and, if its plugin writes the block, its own character.
-  Merged with the host roster by character name.
-- **Nothing.** A room hosted without a plugin shows what the host typed when
-  creating it (difficulty, act) and the joiners' mod labels only.
+## 5. API (v1)
 
-Mixed mods in one game: the list shows each player's mod; joining a room whose
-host plays another mod shows a warning, not a block (to verify that Authentic,
-Unleashed and no-mod players really play together, §9).
+JSON, every answer carries `"v": 1`; errors are `{v, error, detail?}`.
 
-## 5. Server protocol (v1)
+| Call | Body / answer |
+|---|---|
+| `GET /` | the web page |
+| `GET /api/rooms?mod=&difficulty=` | `{rooms: [view]}` — public live rooms; never addresses or tokens |
+| `GET /api/rooms/by-code/{code}` | `{room: view}` — public or not; any letter case |
+| `POST /api/rooms` | `{name, mod:{id,version}, difficulty?, mode?, act?, max_players?, public?, password?, address?, port?, player?}` → `{room_id, code, host_token, address, port, address_ipv6, heartbeat_every, ttl}` |
+| `POST /api/rooms/{id}/heartbeat` | `Authorization: Bearer <host_token>`; `{players?, difficulty?, mode?, act?, vr?}` → `{ok, heartbeat_every}`; 404 when the room expired (create it again) |
+| `DELETE /api/rooms/{id}` | `Authorization: Bearer <host_token>` |
+| `POST /api/join` | `{room_id \| code, password?, mod?, player?}` → `{room_id, address, port, address_ipv6, mod_mismatch}` |
 
-All JSON, `"v": 1`. HTTPS + WSS on 443 behind a reverse proxy.
+`view` = `{room_id, code, name, mod, difficulty, mode, act, max_players,
+players_count, locked, age, players: [{name, class, level, act, area, vr, host, mod}]}`.
 
-| Call | Who | Body / answer |
-|---|---|---|
-| `POST /api/rooms` | host | `{name, mod:{id,version}, difficulty, mode, max_players, public, password?}` → `{room_id, code, host_token}` |
-| `GET /api/rooms?mod=&difficulty=` | anyone | public rooms with players (§4); never IPs, never tokens |
-| `GET /api/rooms/by-code/{code}` | anyone | one room (public or not) |
-| `DELETE /api/rooms/{room_id}` | host | `Authorization: Bearer <host_token>` → closes the room and its tunnels |
-| `POST /api/join` | joiner | `{room_id | code, password?, mod:{id,version}, player?}` → `{tunnel_id, join_token, mod_mismatch}` |
-| `WS /ws/host/{room_id}?token=` | host | control: server→`hello` (with tunnels still waiting for the host), `tunnel`, `left`, `closed`, `error`, `pong`; host→`state` every 5 s (`players`, `difficulty`, `mode`, `act`, `vr`), `kick {tunnel_id}`, `ping`. A second control socket replaces the first (close 4000) |
-| `WS /ws/data/{tunnel_id}?side=host|join&token=` | both | binary frames = raw TCP bytes, in order |
+Codes: 4 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, unique among stored rooms.
 
-Room lifetime: lives while the host's control socket is open, 20 s grace for a
-reconnect; no state message for 30 s removes it.
+Limits (Worker vars): 3 live rooms per address, 10 creations per address per
+minute, 500 rooms, 5 wrong passwords per address and room per minute; names
+≤ 32 printable characters (control and format characters removed).
 
-Codes: 4 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, unique among live rooms.
+## 6. Storage and privacy
 
-Limits (configurable): 3 rooms per source address, 7 tunnels per room,
-frame ≤ 64 KiB, ≤ 128 KiB/s per tunnel, room/char names ≤ 32 printable chars,
-join attempts with a wrong password rate-limited.
+One D1 (SQLite) database, two tables: `rooms` (one row per room; roster and
+joiners as JSON in `data`) and `attempts` (creations and wrong passwords for the
+limits). Expired rooms and attempts older than an hour are deleted on the next
+room creation.
 
-Storage: rooms in memory only. Logs keep no IP addresses (hashed with a daily
-salt when needed for rate limits).
+Kept: the host's address while the room lives (it is what Join hands out).
+Not kept: tokens (SHA-256 only), passwords (PBKDF2), other players' addresses
+(only a keyed hash for the limits, key `ADDR_SALT` + the day). Worker logs and
+observability are off.
 
-## 6. The helper (launcher tab)
-
-Lives in the VR mods' launcher (Win32 C++) as a **Multiplayer** tab; WinHTTP,
-which the launcher already uses, supports WebSockets — no new dependency.
-Contents:
-- room list with filters (my mod / same act / my level ±10 / VR only), *Join*;
-- *Join by code*; *Create room* (name, difficulty, mode, password, public);
-- status line: "Tunnel up — in D2R join TCP/IP game 127.0.0.1", ping, bytes.
-
-The tunnel must keep running while the game runs, so the launcher stays alive
-(minimised / tray) while a room or tunnel is open.
-
-Settings: `server_url` (default: the project's server), *show my character
-in the public list* (on), *public room* default.
-
-Could later be a tiny standalone exe for players without the launcher; the
-protocol does not change.
+Free plan fit: a heartbeat writes one row; at one per minute 100 000 writes a
+day cover about 1 600 room-hours.
 
 ## 7. Roster block (game → helper)
 
 A named shared-memory block `Local\D2RRooms.Roster.v1`, written by a plugin
-inside the game, read by the helper. UTF-8 JSON, length-prefixed, a sequence
-number to detect a torn read:
+inside the game, read by the helper/launcher. UTF-8 JSON, length-prefixed, a
+sequence number to detect a torn read:
 
 ```json
 { "v":1, "seq":42, "mod":{"id":"d2r-vr","version":"0.175.0"}, "vr":true,
@@ -139,37 +118,23 @@ number to detect a torn read:
   "players":[ {"name":"Aria","class":"paladin","level":85,"act":5,"area":"Worldstone Keep Level 2","self":true} ] }
 ```
 
-- Read-only from the game: the plugin only **reads** units and party info;
-  it changes nothing in the game.
-- Any mod's plugin can write it (Authentic first, Unleashed welcome); the
-  contract is this section.
-- No block → the helper falls back to §4 "self report / nothing".
+The plugin only **reads** units and party info; it changes nothing in the game.
+Any mod's plugin can write it (Authentic first, Unleashed welcome). No block →
+§4 "without a roster".
 
-## 8. Server deploy
+## 8. Clients
 
-- One container (Python 3.12, FastAPI + uvicorn websockets, no database),
-  `docker compose up -d`, listens on `127.0.0.1:8080`.
-- TLS by Caddy (automatic Let's Encrypt) in the same compose file; only 443/80 open.
-- A cheap VPS near the players (EU first); a second region later = a second
-  `server_url`, the helper picks by ping.
-- `deploy.sh` like: pull, build, restart; `/healthz` for a check.
+- **Web page** (`GET /`): list with filters, Join (shows the address with a
+  Copy button), Create room (the page keeps the heartbeat while it is open).
+- **Helper** (`tools/helper.py`): `list`, `host` (heartbeat with `--roster`,
+  removes the room on Ctrl+C), `join` (prints the address).
+- **Launcher tab** (not built): the helper's behaviour in the VR mods' launcher,
+  reading the roster block, later opening the port by UPnP.
 
-## 9. To verify before building
+## 9. To verify
 
 1. D2R TCP/IP port (believed 4000/tcp) and whether it can be changed.
-2. Authentic + Unleashed + no-mod players in one TCP/IP game (LAN games so
-   far were one mod per game).
+2. Authentic + Unleashed + no-mod players in one TCP/IP game.
 3. Does a joining client see the other players' act/area and level in the
-   party data, or only the host? (Decides how much the host roster gives.)
-4. Relay latency acceptable for melee in VR (measure ping via the relay vs LAN).
-5. Can the plugin fill D2R's "join TCP/IP game" address field, or does the
-   player type `127.0.0.1` once (the game remembers it)?
-
-## 10. Plan
-
-1. Server: rooms API + relay + limits, tests (pipe bytes through a fake tunnel).
-2. Helper core in C++: local listener ↔ WSS tunnel, tested against the server
-   with two fake "games" (echo sockets).
-3. A real LAN-free test: two PCs, one D2R each, through the server.
-4. Launcher Multiplayer tab.
-5. Roster block in the Authentic plugin; the same contract offered to Unleashed.
+   party data, or only the host?
+4. Whether D2R accepts an IPv6 address or a host name in Join Game.

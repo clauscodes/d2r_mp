@@ -1,55 +1,55 @@
 # D2R Rooms
 
-Room list, quick join and relay for Diablo II: Resurrected TCP/IP games —
-play together without port forwarding. Works with the D2R VR mods
-(Authentic, Unleashed) and without them.
+A board of open Diablo II: Resurrected TCP/IP games: who hosts, who plays
+(class, level, act, which mod), and the host's address to join. Works with the
+D2R VR mods (Authentic, Unleashed) and without them. Players connect their game
+directly to the host; no game traffic goes through the board.
 
-Design: [SPEC.md](SPEC.md).
+Runs free on Cloudflare Workers + D1. Design: [SPEC.md](SPEC.md).
 
 ## What is here
 
 | Path | What |
 |---|---|
-| `server/rooms/` | the server: rooms API, host control socket, byte relay, limits |
-| `tools/helper.py` | reference helper (host / join / list) — the client side in plain Python |
-| `tests/` | API, relay (fake tunnel of raw sockets) and end-to-end through the helper |
-| `docker-compose.yml`, `Caddyfile`, `deploy.sh` | the server with automatic HTTPS |
+| `worker/src/` | the Worker: API (`board.ts`), input checks (`validate.ts`), the web page (`page.ts`) |
+| `worker/migrations/` | the D1 tables |
+| `worker/test/` | tests, run inside the Workers runtime with a local D1 |
+| `tools/helper.py` | command-line client: `list`, `host`, `join` |
+| `.github/workflows/worker.yml` | tests on every push; deploy from `main` once Cloudflare is set up |
 
 ## Develop
 
 ```
-python -m venv .venv
-.venv/Scripts/python -m pip install -r requirements-dev.txt
-.venv/Scripts/python -m pytest
+cd worker
+npm ci
+npx vitest run
+npx wrangler d1 migrations apply DB --local
+npx wrangler dev
 ```
 
-Run locally: `cd server && uvicorn rooms.app:app --port 8080 --ws websockets-sansio --no-access-log --log-level warning`.
+The page is then at http://127.0.0.1:8787/.
 
-## Try with real games (before the launcher tab exists)
-
-Host PC (D2R hosts a TCP/IP game):
+## Helper
 
 ```
-python tools/helper.py host --server https://rooms.example.net --name "Baal runs" --mod d2r-vr --version 0.175.0
+pip install -r tools/requirements.txt
+python tools/helper.py list --server https://<your-worker>.workers.dev
+python tools/helper.py host --server URL --name "Baal runs" --mod d2r-vr --version 0.175.0
+python tools/helper.py join --server URL --code K7QX --mod d2r-pcvr
 ```
 
-It prints the room code. Joiner PC:
+`host` keeps the room alive until Ctrl+C. Players behind the host's router need
+the D2R port open on the host, or everyone in one VPN (`--address` gives the
+host's VPN address).
 
-```
-python tools/helper.py join --server https://rooms.example.net --code K7QX --mod d2r-pcvr
-```
+## Deploy (once)
 
-then in D2R join the TCP/IP game `127.0.0.1`. `python tools/helper.py list --server …` shows the rooms.
-
-## Deploy
-
-On a VPS with Docker, a DNS name pointing to it and ports 80/443 open:
-
-```
-git clone <this repo> d2r_rooms && cd d2r_rooms
-cp .env.example .env    # set ROOMS_DOMAIN
-./deploy.sh
-```
-
-One process holds all rooms in memory: keep a single `rooms` container and
-worker. No access logs are written, by the app or by Caddy.
+1. A free Cloudflare account. In `worker/`: `npx wrangler login`, then
+   `npx wrangler d1 create d2r_rooms` — note the database id.
+2. An API token (My Profile → API Tokens → *Edit Cloudflare Workers* template,
+   plus *D1: Edit*) and the account id.
+3. Repository secrets (Settings → Secrets and variables → Actions):
+   `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID`, and
+   `ADDR_SALT` (any long random string).
+4. Push to `main`: the workflow tests, applies the migrations and deploys to
+   `https://d2r-rooms.<your-subdomain>.workers.dev`.
