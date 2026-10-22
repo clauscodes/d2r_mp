@@ -1,0 +1,5 @@
+{$ROOMS_DOMAIN} {
+	# No access log: it would keep every player's address.
+	encode gzip
+	reverse_proxy rooms:8080
+}
