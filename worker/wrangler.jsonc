@@ -6,9 +6,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "d2r_rooms",
-      // Filled in once after `npx wrangler d1 create d2r_rooms` (see README).
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "d2r-rooms",
+      "database_id": "167719ec-9866-42a0-ac3b-927f73ed01b2",
       "migrations_dir": "migrations"
     }
   ],
