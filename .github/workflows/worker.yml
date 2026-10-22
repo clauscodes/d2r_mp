@@ -13,8 +13,8 @@ jobs:
       run:
         working-directory: worker
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -39,9 +39,9 @@ jobs:
         if: env.CLOUDFLARE_API_TOKEN == ''
         working-directory: .
         run: echo "::notice::Deploy skipped - add CLOUDFLARE_API_TOKEN to the repository secrets (README, Deploy)."
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: env.CLOUDFLARE_API_TOKEN != ''
         with:
           node-version: 22
