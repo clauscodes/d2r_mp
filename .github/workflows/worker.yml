@@ -32,24 +32,23 @@ jobs:
         working-directory: worker
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       ADDR_SALT: ${{ secrets.ADDR_SALT }}
       WRANGLER_SEND_METRICS: "false"
     steps:
       - name: Not set up yet
-        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        if: env.CLOUDFLARE_API_TOKEN == ''
         working-directory: .
-        run: echo "::notice::Deploy skipped - add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to the repository secrets (README, Deploy)."
+        run: echo "::notice::Deploy skipped - add CLOUDFLARE_API_TOKEN to the repository secrets (README, Deploy)."
       - uses: actions/checkout@v4
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        if: env.CLOUDFLARE_API_TOKEN != ''
       - uses: actions/setup-node@v4
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        if: env.CLOUDFLARE_API_TOKEN != ''
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: worker/package-lock.json
       - name: Deploy
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        if: env.CLOUDFLARE_API_TOKEN != ''
         run: |
           npm ci
           npx wrangler d1 migrations apply DB --remote

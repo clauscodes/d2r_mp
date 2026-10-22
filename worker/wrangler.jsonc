@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "d2r-rooms",
+  "account_id": "87f6ae07ac7a8f50750e929c897f63e5",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "d1_databases": [

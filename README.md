@@ -45,11 +45,11 @@ host's VPN address).
 ## Deploy (once)
 
 1. A free Cloudflare account and a D1 database `d2r-rooms` (Storage &
-   Databases → D1); its id goes into `worker/wrangler.jsonc` (`database_id`).
+   Databases → D1); the account id and the database id go into
+   `worker/wrangler.jsonc` (`account_id`, `database_id`).
 2. An API token (My Profile → API Tokens → *Edit Cloudflare Workers* template,
-   plus *Account → D1 → Edit*) and the account id.
+   plus *Account → D1 → Edit*).
 3. Repository secrets (Settings → Secrets and variables → Actions):
-   `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `ADDR_SALT` (any long
-   random string).
+   `CLOUDFLARE_API_TOKEN` and `ADDR_SALT` (any long random string).
 4. Push to `main` or press Actions → worker → Run workflow: it tests, applies
    the migrations and deploys to `https://d2r-rooms.<your-subdomain>.workers.dev`.
