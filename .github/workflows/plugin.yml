@@ -1,0 +1,25 @@
+name: plugin
+
+on:
+  push:
+    branches: [main]
+    paths: ["plugin/**", ".github/workflows/plugin.yml"]
+  pull_request:
+    paths: ["plugin/**", ".github/workflows/plugin.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build
+        run: |
+          cmake -S plugin -B plugin/build -A x64
+          cmake --build plugin/build --config Release
+      - name: Test
+        run: plugin/build/Release/d2r_rooms_tests.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: d2rl-d2r-rooms
+          path: plugin/build/Release/d2rl-d2r-rooms.dll

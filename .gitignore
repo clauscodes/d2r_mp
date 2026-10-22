@@ -3,3 +3,4 @@ __pycache__/
 node_modules/
 .wrangler/
 .dev.vars
+plugin/build/
