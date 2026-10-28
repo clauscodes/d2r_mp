@@ -2,7 +2,7 @@
 // ROOM_TTL seconds without one and it is gone from every answer, and the next
 // room creation deletes it for good.
 
-import { CreateRoom, Heartbeat, JoinRoom, Mod, Player, isIPv6 } from "./validate";
+import { CreateRoom, Heartbeat, JoinRoom, Mod, Player, Relay, isIPv6 } from "./validate";
 
 export interface Env {
   DB: D1Database;
@@ -97,6 +97,8 @@ interface RoomData {
   roster: Player[];
   vr: boolean | null;
   joiners: Joiner[];
+  // Handed out with the address, after the password; the list shows only its url.
+  relay: Relay | null;
 }
 
 interface RoomRow {
@@ -121,7 +123,7 @@ interface RoomRow {
 }
 
 function roomData(row: RoomRow): RoomData {
-  return { host_player: null, roster: [], vr: null, joiners: [], ...JSON.parse(row.data) };
+  return { host_player: null, roster: [], vr: null, joiners: [], relay: null, ...JSON.parse(row.data) };
 }
 
 interface PlayerRow {
@@ -183,6 +185,8 @@ function view(row: RoomRow, t: number) {
     locked: row.password_hash !== null,
     age: t - row.created_at,
     players: list,
+    // Clients ask the relay itself for its status (PROTOCOL.md §1.1).
+    relay_url: data.relay?.url ?? null,
   };
 }
 
@@ -227,7 +231,7 @@ export class Board {
 
     const address = req.address ?? ip;
     const token = randomToken();
-    const data: RoomData = { host_player: req.player, roster: [], vr: req.player?.vr ?? null, joiners: [] };
+    const data: RoomData = { host_player: req.player, roster: [], vr: req.player?.vr ?? null, joiners: [], relay: req.relay };
     const password = req.password ? await hashPassword(req.password) : null;
     for (let attempt = 0; attempt < 20; attempt++) {
       const code = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
@@ -268,6 +272,7 @@ export class Board {
     const data = roomData(row);
     if (hb.players) data.roster = hb.players;
     if (hb.vr !== null) data.vr = hb.vr;
+    if (hb.relay !== undefined) data.relay = hb.relay;
     await this.db
       .prepare("UPDATE rooms SET last_seen = ?, data = ?, difficulty = ?, mode = ?, act = ? WHERE room_id = ?")
       .bind(now(), JSON.stringify(data), hb.difficulty ?? row.difficulty, hb.mode ?? row.mode, hb.act ?? row.act, room_id)
@@ -306,8 +311,8 @@ export class Board {
       await this.db.prepare("INSERT INTO attempts (key, at) VALUES (?, ?)").bind(key, now()).run();
       throw new Refused(403, "bad_password");
     }
+    const data = roomData(row);
     if (req.mod || req.player) {
-      const data = roomData(row);
       const name = req.player?.name ?? null;
       data.joiners = data.joiners.filter((j) => !name || j.name !== name);
       data.joiners.push({ name, mod: req.mod, player: req.player, at: now() });
@@ -320,6 +325,9 @@ export class Board {
       port: row.port,
       address_ipv6: isIPv6(row.address),
       mod_mismatch: req.mod !== null && req.mod.id !== row.mod_id,
+      // Set when the host's port is unreachable: join through this relay, or
+      // try the address when the relay refuses (over_budget) or does not answer.
+      relay: data.relay,
     };
   }
 }

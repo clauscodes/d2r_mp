@@ -1,0 +1,26 @@
+# The relay behind Caddy, which gets a Let's Encrypt certificate by itself.
+# Set RELAY_DOMAIN in .env (a DNS name pointing at this server), then:
+#   docker compose up -d
+# Players add  wss://<RELAY_DOMAIN>  to their relay list.
+services:
+  relay:
+    build: .
+    restart: unless-stopped
+    environment:
+      RELAY_NAME: ${RELAY_NAME:-D2R Rooms relay}
+      RELAY_KEYS: ${RELAY_KEYS:-}
+      MAX_ROOMS: ${MAX_ROOMS:-500}
+      NEAR_LIMIT: ${NEAR_LIMIT:-0.8}
+    expose: ["8080"]
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      RELAY_DOMAIN: ${RELAY_DOMAIN:?set RELAY_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [relay]
+volumes:
+  caddy_data:

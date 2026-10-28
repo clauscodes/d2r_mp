@@ -1,0 +1,21 @@
+{
+  "name": "d2r-rooms-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "conformance": "python ../conformance.py ws://127.0.0.1:8787",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.3.7",
+    "@cloudflare/workers-types": "5.20261007.1",
+    "@vitest/runner": "4.1.11",
+    "@vitest/snapshot": "4.1.11",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.148.0"
+  }
+}

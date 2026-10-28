@@ -20,6 +20,13 @@ export interface Player {
   self: boolean;
 }
 
+/** The relay a host uses when its own port cannot be reached (relay/PROTOCOL.md). */
+export interface Relay {
+  url: string;
+  room: string;
+  key: string;
+}
+
 export interface CreateRoom {
   name: string;
   mod: Mod;
@@ -32,10 +39,13 @@ export interface CreateRoom {
   address: string | null;
   port: number;
   player: Player | null;
+  relay: Relay | null;
 }
 
 export interface Heartbeat {
   players: Player[] | null;
+  /** undefined = unchanged, null = the host stopped using a relay. */
+  relay: Relay | null | undefined;
   difficulty: string | null;
   mode: string | null;
   act: number | null;
@@ -144,6 +154,21 @@ function address(v: unknown, loc: string): string | null {
   throw new Invalid(loc, "an IPv4/IPv6 address or a host name");
 }
 
+const RELAY_URL = /^wss?:\/\/[A-Za-z0-9.-]{1,120}(:\d{1,5})?(\/[A-Za-z0-9._~\/-]{0,60})?$/;
+const RELAY_TOKEN = /^[A-Za-z0-9_-]{16,128}$/;
+
+export function parseRelay(v: unknown, loc = "relay"): Relay | null {
+  if (v === undefined || v === null) return null;
+  const o = obj(v, loc);
+  const url = str(o.url, `${loc}.url`, 200).replace(/\/+$/, "");
+  if (!RELAY_URL.test(url)) throw new Invalid(`${loc}.url`, "a ws:// or wss:// address");
+  const room = str(o.room, `${loc}.room`, 64);
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(room)) throw new Invalid(`${loc}.room`, "16-64 letters, digits, _ and -");
+  const key = str(o.key, `${loc}.key`, 128);
+  if (!RELAY_TOKEN.test(key)) throw new Invalid(`${loc}.key`, "16-128 letters, digits, _ and -");
+  return { url, room, key };
+}
+
 export function parseCreate(body: unknown): CreateRoom {
   const o = obj(body, "body");
   return {
@@ -158,6 +183,7 @@ export function parseCreate(body: unknown): CreateRoom {
     address: address(o.address, "address"),
     port: int(o.port, "port", 1, 65535) ?? 4000,
     player: o.player === undefined || o.player === null ? null : parsePlayer(o.player),
+    relay: parseRelay(o.relay),
   };
 }
 
@@ -171,6 +197,7 @@ export function parseHeartbeat(body: unknown): Heartbeat {
   }
   return {
     players,
+    relay: o.relay === undefined ? undefined : parseRelay(o.relay),
     difficulty: oneOf(o.difficulty, "difficulty", DIFFICULTIES),
     mode: oneOf(o.mode, "mode", MODES),
     act: int(o.act, "act", 1, 5),

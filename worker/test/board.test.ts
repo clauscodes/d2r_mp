@@ -223,6 +223,29 @@ describe("lifetime", () => {
 });
 
 describe("page", () => {
+  it("hands the host's relay to joiners only, after the password", async () => {
+    const relay = { url: "wss://relay.example.net", room: "r".repeat(22), key: "k".repeat(32) };
+    const room = await create({ relay, password: "pw" });
+    const listed = (await list()).find((r) => r.room_id === room.room_id);
+    expect(listed.relay_url).toBe("wss://relay.example.net");
+    expect(JSON.stringify(await list())).not.toContain(relay.key);
+    expect((await join({ room_id: room.room_id, password: "nope" })).status).toBe(403);
+    const ok = await join({ room_id: room.room_id, password: "pw" });
+    expect(ok.json.relay).toEqual(relay);
+    expect(ok.json.address).toBe(HOST_IP); // the fallback when the relay refuses
+    // The host turns the relay on later (its port check failed), then off.
+    const plain = await create({}, "198.51.100.9");
+    expect((await join({ room_id: plain.room_id })).json.relay).toBeNull();
+    expect((await heartbeat(plain, { relay })).status).toBe(200);
+    expect((await join({ room_id: plain.room_id })).json.relay).toEqual(relay);
+    expect((await heartbeat(plain, {})).status).toBe(200);
+    expect((await join({ room_id: plain.room_id })).json.relay).toEqual(relay); // no field: unchanged
+    expect((await heartbeat(plain, { relay: null })).status).toBe(200);
+    expect((await join({ room_id: plain.room_id })).json.relay).toBeNull();
+    for (const bad of [{ ...relay, url: "https://relay.example.net" }, { ...relay, room: "short" }, { ...relay, key: "bad key!" }])
+      expect((await call("POST", "/api/rooms", { ...ROOM, relay: bad }, { ip: "198.51.100.30" })).status).toBe(422);
+  });
+
   it("serves the board page and 404s the rest", async () => {
     const page = await exports.default.fetch(new Request("https://rooms.test/"));
     expect(page.headers.get("content-type")).toContain("text/html");

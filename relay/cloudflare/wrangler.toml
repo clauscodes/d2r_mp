@@ -1,0 +1,45 @@
+# D2R Rooms relay on Cloudflare. Its own Worker, apart from the room board:
+# a deploy restarts the room objects and drops the games they carry, so deploy
+# it rarely and never on every push. Guide: docs/host_a_relay.md.
+#
+#   npm ci
+#   npx wrangler login            # once, with your own Cloudflare account
+#   npx wrangler deploy
+#   npx wrangler secret put RELAY_KEYS   # optional: only hosts with a key
+#
+# Players then add  wss://d2r-rooms-relay.<your-subdomain>.workers.dev  to
+# their relay list.
+
+name = "d2r-rooms-relay"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[vars]
+RELAY_NAME = "D2R Rooms relay"
+# "paid" (Workers Paid, $5/month) or "free". Sets how the cap is counted.
+PLAN = "paid"
+# Paid: the whole monthly bill allowed, the plan's $5 included.
+BUDGET_USD = "10"
+PLAN_BASE_USD = "5"
+# Share of the cap at which the relay takes no new rooms (games already made go on).
+NEAR_LIMIT = "0.8"
+# Free: share of the daily quota treated as the cap.
+FREE_SHARE = "0.9"
+# "0" = maintenance: no new rooms or joiners, running games go on.
+RELAY_OPEN = "1"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RoomRelay"
+
+[[durable_objects.bindings]]
+name = "BUDGET"
+class_name = "Budget"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomRelay", "Budget"]
+
+[observability]
+enabled = false
