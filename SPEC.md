@@ -1,13 +1,17 @@
-# D2R Rooms — SPEC (v0.2, 2026-10-22)
+# D2R Rooms — SPEC (v0.3, 2026-10-28)
 
 A board of open Diablo II: Resurrected **TCP/IP** games. A host publishes a
 room; other players see it in a list (who plays, class, level, act, which mod)
 or find it by a short code, get the host's address and connect their game
-**directly** to it. No game traffic passes through the board.
+**directly** to it. No game traffic passes through the board. When the host's
+port cannot be reached from outside, the game goes through a **relay** instead
+(§10), which is separate from the board.
 
 Status: built — Cloudflare Worker + D1 (`worker/`), web page, reference helper
-(`tools/helper.py`), tests. Not built: the launcher tab, the roster block in
-the mods' plugins, UPnP port opening.
+(`tools/helper.py`), the D2RLoader plugin (`plugin/`), the relay (`relay/`:
+Cloudflare Worker and Python server, one protocol), tests. Not built: the
+launcher tab, the roster block in the mods' plugins. UPnP is D2RLoader's own
+(it already tries UPnP, PCP and NAT-PMP). Not deployed: the relay.
 
 ## 1. Goals and non-goals
 
@@ -21,7 +25,8 @@ Goals
 Non-goals
 - Never touches Battle.net or the game's own servers, game data, saves or rules.
   The game runs its own TCP/IP host/join exactly as on a LAN.
-- No relay of game traffic, no accounts, no chat.
+- No relay through the board itself, no accounts, no chat. The relay (§10) is
+  its own Worker or server; the board only carries which relay a room uses.
 
 ## 2. Independence
 
@@ -133,8 +138,37 @@ Any mod's plugin can write it (Authentic first, Unleashed welcome). No block →
 
 ## 9. To verify
 
+0. **The relay with a real game** (two PCs, §10): that D2R joins `127.0.0.1`,
+   that the host's game accepts two players coming from loopback, and the
+   game's bytes per second.
+
 1. D2R TCP/IP port (believed 4000/tcp) and whether it can be changed.
 2. Authentic + Unleashed + no-mod players in one TCP/IP game.
 3. Does a joining client see the other players' act/area and level in the
    party data, or only the host?
 4. Whether D2R accepts an IPv6 address or a host name in Join Game.
+
+## 10. Relay
+
+When D2RLoader's own check says the host's port is **unreachable** (its UPnP /
+PCP / NAT-PMP found no router, or carrier-grade NAT), the host's plugin opens
+the room on a relay; joiners connect to the same relay and their game joins a
+listener on `127.0.0.1`. Wire protocol: [relay/PROTOCOL.md](relay/PROTOCOL.md).
+Guide: [docs/host_a_relay.md](docs/host_a_relay.md).
+
+- **Which relay.** The host's list in `d2r-rooms.ini` (ours first by default,
+  anyone may add their own); the first that answers `/healthz` with status
+  `active` gets the room. A joiner always uses the host's relay.
+- **Board fields.** Create and heartbeat take `relay: {url, room, key}` (`null`
+  in a heartbeat clears it). Join hands it out with the address, after the
+  password; the address stays the fallback when the relay refuses
+  (`over_budget`) or does not answer. The public list shows only `relay_url`,
+  and clients ask that relay for its status.
+- **Status.** `active` / `near_limit` (no new rooms) / `limit` (no new
+  joiners) from the relay, plus "not answering" on the client side; shown in
+  the panel and per room in the list. A relay never cuts a running game for its
+  budget.
+- **Ours.** Cloudflare Workers Paid ($5 a month) with a $10 monthly cap: past
+  80% no new rooms, at the cap no new joiners, running games go on. Its own
+  Worker (`d2r-rooms-relay`), deployed by hand only: a deploy drops relayed
+  games. Never on BodyWalk's server.

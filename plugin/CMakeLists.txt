@@ -15,11 +15,15 @@ if(MSVC)
 endif()
 
 # Everything without D2RLoader or Windows calls, shared by the plugin and the tests.
-add_library(d2r_rooms_core STATIC src/json.cpp src/board.cpp src/layout.cpp)
+add_library(d2r_rooms_core STATIC src/json.cpp src/board.cpp src/layout.cpp src/relay_config.cpp)
 target_include_directories(d2r_rooms_core PUBLIC src)
 
+# The relay client: WinHTTP WebSockets + loopback TCP, no D2RLoader calls.
+add_library(d2r_rooms_net STATIC src/relay_net.cpp)
+target_link_libraries(d2r_rooms_net PUBLIC d2r_rooms_core winhttp ws2_32 bcrypt)
+
 add_library(d2r_rooms SHARED src/plugin.cpp src/d2r_rooms.rc)
-target_link_libraries(d2r_rooms PRIVATE d2r_rooms_core D2RLPlugin user32)
+target_link_libraries(d2r_rooms PRIVATE d2r_rooms_core d2r_rooms_net D2RLPlugin user32)
 # D2RLoader pairs d2rl-<plugin id>.dll with its id.
 set_target_properties(d2r_rooms PROPERTIES OUTPUT_NAME "d2rl-d2r-rooms")
 
@@ -27,3 +31,7 @@ enable_testing()
 add_executable(d2r_rooms_tests tests/tests.cpp)
 target_link_libraries(d2r_rooms_tests PRIVATE d2r_rooms_core)
 add_test(NAME d2r_rooms_tests COMMAND d2r_rooms_tests)
+
+# Needs a running relay: relay_e2e ws://127.0.0.1:8080 (see relay/README.md).
+add_executable(relay_e2e tests/relay_e2e.cpp)
+target_link_libraries(relay_e2e PRIVATE d2r_rooms_net)

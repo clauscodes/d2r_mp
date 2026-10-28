@@ -3,7 +3,10 @@
 A board of open Diablo II: Resurrected TCP/IP games: who hosts, who plays
 (class, level, act, which mod), and the host's address to join. Works with the
 D2R VR mods (Authentic, Unleashed) and without them. Players connect their game
-directly to the host; no game traffic goes through the board.
+directly to the host; no game traffic goes through the board. When the host's
+port cannot be reached from outside, the game goes through a relay instead:
+both PCs dial out, nobody touches a router ([relay/](relay/README.md), guide for
+running your own: [docs/host_a_relay.md](docs/host_a_relay.md)).
 
 Runs free on Cloudflare Workers + D1. Design: [SPEC.md](SPEC.md).
 
@@ -14,8 +17,11 @@ Runs free on Cloudflare Workers + D1. Design: [SPEC.md](SPEC.md).
 | `worker/src/` | the Worker: API (`board.ts`), input checks (`validate.ts`), the web page (`page.ts`) |
 | `worker/migrations/` | the D1 tables |
 | `worker/test/` | tests, run inside the Workers runtime with a local D1 |
+| `plugin/` | the D2RLoader plugin: the list beside D2R's TCP/IP screen, the relay client |
+| `relay/` | the relay: protocol, Cloudflare Worker, Python/Docker server, conformance check |
 | `tools/helper.py` | command-line client: `list`, `host`, `join` |
 | `.github/workflows/worker.yml` | tests on every push; deploy from `main` once Cloudflare is set up |
+| `.github/workflows/relay.yml` | relay tests on every push; deploy only by hand (Run workflow) |
 
 ## Develop
 

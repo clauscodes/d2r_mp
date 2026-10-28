@@ -1,0 +1,66 @@
+name: relay
+
+# Tests on every push and pull request. The relay is NEVER deployed from here
+# on a push: a deploy restarts the room objects and drops the games they carry.
+# Deploy by hand (docs/host_a_relay.md), or press Actions -> relay -> Run
+# workflow with "deploy" ticked when no game is running.
+
+on:
+  push:
+    paths: ["relay/**", ".github/workflows/relay.yml"]
+  pull_request:
+    paths: ["relay/**", ".github/workflows/relay.yml"]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy the Cloudflare relay (drops running relayed games)"
+        type: boolean
+        default: false
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install -r relay/python/requirements.txt
+      - run: python -m unittest relay/python/test_relay.py
+
+  cloudflare:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay/cloudflare
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relay/cloudflare/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+
+  deploy:
+    needs: [python, cloudflare]
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay/cloudflare
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relay/cloudflare/package-lock.json
+      - run: npm ci
+      - run: npx wrangler deploy

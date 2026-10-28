@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include "relay_config.h"
+
 namespace rooms {
 
 inline constexpr const char* kDefaultServer = "https://d2r-rooms.d2r-rooms.workers.dev";
@@ -39,6 +41,8 @@ struct Room {
 	int playersCount = 1;
 	bool locked = false;
 	std::vector<Player> players;
+	std::string relayUrl;                           // the host plays through this relay
+	RelayState relayState = RelayState::Unknown;  // filled in by the plugin from the relay itself
 };
 
 struct JoinAnswer {
@@ -46,6 +50,7 @@ struct JoinAnswer {
 	int port = 4000;
 	bool ipv6 = false;
 	bool modMismatch = false;
+	std::optional<RelayRef> relay;  // join through it; the address is the fallback
 };
 
 struct Hosted {
@@ -72,7 +77,9 @@ std::string ParseError(std::string_view body);
 
 std::string CreateBody(std::string_view name, const Mod& mod, std::string_view password, int act);
 std::string JoinBody(std::string_view roomId, std::string_view password, const Mod& mod);
-std::string HeartbeatBody(int act, int level);
+// relayJson: "" leaves the room's relay as it is, "null" clears it, or RelayRefJson().
+std::string CreateBody(std::string_view name, const Mod& mod, std::string_view password, int act, std::string_view relayJson);
+std::string HeartbeatBody(int act, int level, std::string_view relayJson = {});
 
 // One line per room and one for its players, as shown in the list.
 std::string RoomLine(const Room& room);

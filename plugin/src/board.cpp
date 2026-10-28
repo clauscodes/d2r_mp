@@ -88,6 +88,7 @@ std::optional<std::vector<Room>> ParseRooms(std::string_view body) {
 		room.maxPlayers = r["max_players"].asInt(8);
 		room.playersCount = r["players_count"].asInt(1);
 		room.locked = r["locked"].asBool();
+		room.relayUrl = r["relay_url"].asString();
 		const json::Value& players = r["players"];
 		for (size_t j = 0; j < players.size(); ++j) {
 			const json::Value& p = players[j];
@@ -114,6 +115,9 @@ std::optional<JoinAnswer> ParseJoin(std::string_view body) {
 	a.port = (*doc)["port"].asInt(4000);
 	a.ipv6 = (*doc)["address_ipv6"].asBool();
 	a.modMismatch = (*doc)["mod_mismatch"].asBool();
+	const json::Value& relay = (*doc)["relay"];
+	if (ParseRelayUrl(relay["url"].asString()) && !relay["room"].asString().empty() && !relay["key"].asString().empty())
+		a.relay = RelayRef {relay["url"].asString(), relay["room"].asString(), relay["key"].asString()};
 	return a;
 }
 
@@ -142,9 +146,14 @@ static std::string ModJson(const Mod& mod) {
 }
 
 std::string CreateBody(std::string_view name, const Mod& mod, std::string_view password, int act) {
+	return CreateBody(name, mod, password, act, {});
+}
+
+std::string CreateBody(std::string_view name, const Mod& mod, std::string_view password, int act, std::string_view relayJson) {
 	std::string body = "{\"v\":1,\"name\":" + json::Quote(name) + ",\"mod\":" + ModJson(mod) + ",\"public\":true";
 	if (!password.empty()) body += ",\"password\":" + json::Quote(password);
 	if (act >= 1 && act <= 5) body += ",\"act\":" + std::to_string(act);
+	if (!relayJson.empty()) body += ",\"relay\":" + std::string(relayJson);
 	return body + "}";
 }
 
@@ -154,10 +163,11 @@ std::string JoinBody(std::string_view roomId, std::string_view password, const M
 	return body + "}";
 }
 
-std::string HeartbeatBody(int act, int level) {
+std::string HeartbeatBody(int act, int level, std::string_view relayJson) {
 	std::string body = "{\"v\":1";
 	if (act >= 1 && act <= 5) body += ",\"act\":" + std::to_string(act);
 	(void)level;  // the host's own row needs a name the plugin cannot read yet
+	if (!relayJson.empty()) body += ",\"relay\":" + std::string(relayJson);
 	return body + "}";
 }
 
@@ -169,6 +179,7 @@ std::string RoomLine(const Room& room) {
 	if (room.act >= 1) line += "   Act " + std::to_string(room.act);
 	line += "   " + std::to_string(room.playersCount) + "/" + std::to_string(room.maxPlayers);
 	line += "   " + ModLabel(room.mod);
+	if (!room.relayUrl.empty()) line += std::string("   relay: ") + RelayStateLabel(room.relayState);
 	return line;
 }
 

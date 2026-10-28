@@ -7,6 +7,7 @@
 #include "board.h"
 #include "json.h"
 #include "layout.h"
+#include "relay_config.h"
 
 namespace {
 
@@ -180,6 +181,83 @@ void TestLayout() {
 	CHECK(hostingShown && !formShown);
 }
 
+void TestRelay() {
+	// The relay list: ours alone without entries, the player's order, keys, bad lines skipped.
+	auto cfg = ParseRelayIni("");
+	CHECK(cfg.mode == RelayMode::Auto && cfg.relays.size() == 1 && cfg.relays[0].url == kDefaultRelayUrl);
+	cfg = ParseRelayIni(DefaultRelayIni());
+	CHECK(cfg.relays.size() == 1 && cfg.relays[0].name == kDefaultRelayName && cfg.relays[0].key.empty());
+	cfg = ParseRelayIni(
+		"[relay]\r\nmode = Always\r\n[relays]\r\n; comment\r\nFriends = wss://relay.friends.net/ secret-key-123\r\n"
+		"Bad = https://nope.example\r\nOurs = wss://d2r-rooms-relay.d2r-rooms.workers.dev\r\nAgain = wss://relay.friends.net\r\n"
+		"Local = ws://127.0.0.1:8080\r\n");
+	CHECK(cfg.mode == RelayMode::Always);
+	CHECK(cfg.relays.size() == 3);
+	CHECK(cfg.relays[0].name == "Friends" && cfg.relays[0].url == "wss://relay.friends.net" && cfg.relays[0].key == "secret-key-123");
+	CHECK(cfg.relays[2].url == "ws://127.0.0.1:8080");
+	CHECK(ParseRelayIni("[relay]\nmode=never\n").mode == RelayMode::Never);
+
+	auto u = ParseRelayUrl("wss://relay.example.net:8443/d2r");
+	CHECK(u && u->secure && u->host == "relay.example.net" && u->port == 8443 && u->path == "/d2r");
+	u = ParseRelayUrl("ws://127.0.0.1:8787");
+	CHECK(u && !u->secure && u->port == 8787 && u->path.empty());
+	CHECK(ParseRelayUrl("wss://x.net")->port == 443);
+	CHECK(!ParseRelayUrl("https://x.net") && !ParseRelayUrl("wss://") && !ParseRelayUrl("wss://x.net:99999") && !ParseRelayUrl("wss://a b"));
+
+	// d2rloader.toml: only [d2rloader.advanced] game_port counts.
+	CHECK(ParseGamePort("") == 4000);
+	CHECK(ParseGamePort("[d2rloader.advanced]\r\n# TCP port\r\ngame_port = 4001\r\n") == 4001);
+	CHECK(ParseGamePort("[other]\ngame_port = 5000\n[d2rloader.advanced]\nautomatic_port_mapping = true\n") == 4000);
+	CHECK(ParseGamePort("[d2rloader.advanced]\ngame_port = 70000\n") == 4000);
+
+	// d2rloader.log lines (D2RLoader 1.3.1).
+	CHECK(ParseHostingVerdict("[INFO] TCP/IP hosting is using TCP port 4001.\n") == HostingVerdict::Unknown);
+	CHECK(ParseHostingVerdict("[INFO] TCP port 4001 is reachable from outside; no router changes were needed.\n") == HostingVerdict::Reachable);
+	CHECK(ParseHostingVerdict("D2RLoader: Automatic router mapping failed: no compatible router was found. The game is still hosting\n") ==
+	      HostingVerdict::Suspect);
+	CHECK(ParseHostingVerdict("Automatic router mapping failed: no compatible router was found.\nHosting verification finished: Unreachable.\n") ==
+	      HostingVerdict::Unreachable);
+	CHECK(ParseHostingVerdict("Hosting readiness mapped via UPnP, but TCP port 4001 remained unreachable from outside.\n") ==
+	      HostingVerdict::Unreachable);
+	CHECK(ParseHostingVerdict("mapping failed\nAutomatic router mapping succeeded via UPnP on TCP port 4001.\nTCP port 4001 is reachable from outside\n") ==
+	      HostingVerdict::Reachable);
+
+	// /healthz
+	auto h = ParseHealth(200, R"({"ok":true,"relay":1,"name":"Ours","status":"near_limit","open":true,"usage":0.85,"pipes":7})");
+	CHECK(h.state == RelayState::NearLimit && h.usage > 0.84 && h.name == "Ours");
+	CHECK(ParseHealth(200, R"({"ok":true,"relay":1,"status":"limit","open":false})").state == RelayState::Limit);
+	CHECK(ParseHealth(200, R"({"ok":true,"relay":1,"open":true})").state == RelayState::Active);
+	CHECK(ParseHealth(0, "").state == RelayState::NoAnswer && ParseHealth(502, "bad gateway").state == RelayState::NoAnswer);
+	CHECK(ParseHealth(200, R"({"ok":true,"relay":2})").state == RelayState::NoAnswer);  // a protocol we do not speak
+	CHECK(std::string(RelayStateLabel(RelayState::Limit)) == "limit reached");
+
+	// The board carries the relay.
+	auto join = ParseJoin(R"({"address":"1.2.3.4","port":4000,"relay":{"url":"wss://r.example","room":"room-id-0123456789ab","key":"key-0123456789abcdef"}})");
+	CHECK(join && join->relay && join->relay->url == "wss://r.example" && join->relay->key == "key-0123456789abcdef");
+	CHECK(!ParseJoin(R"({"address":"1.2.3.4","relay":null})")->relay);
+	const RelayRef ref {"wss://r.example", "room-id-0123456789ab", "key-0123456789abcdef"};
+	auto hb = json::Parse(HeartbeatBody(2, 0, RelayRefJson(ref)));
+	CHECK(hb && (*hb)["relay"]["room"].asString() == ref.room);
+	CHECK((*json::Parse(HeartbeatBody(2, 0, "null"))).has("relay") && (*json::Parse(HeartbeatBody(2, 0, "null")))["relay"].isNull());
+	CHECK(!json::Parse(HeartbeatBody(2, 0))->has("relay"));
+	CHECK((*json::Parse(CreateBody("x", {}, "", 0, RelayRefJson(ref))))["relay"]["url"].asString() == ref.url);
+	auto rooms = ParseRooms(R"({"rooms":[{"room_id":"a","code":"AB23","name":"R","relay_url":"wss://r.example"}]})");
+	CHECK(rooms && (*rooms)[0].relayUrl == "wss://r.example");
+	(*rooms)[0].relayState = RelayState::NearLimit;
+	CHECK(RoomLine((*rooms)[0]).find("relay: near its limit") != std::string::npos);
+
+	// Frames, tokens, hashes.
+	CHECK(Frame(kFrameData, 3, "ab") == std::string("\x02\x03" "ab", 4));
+	CHECK(Frame(kFrameOpen, 1).size() == 2);
+	const uint8_t sixteen[16] {};
+	CHECK(Base64Url(sixteen, 16) == "AAAAAAAAAAAAAAAAAAAAAA");
+	const uint8_t man[3] {'M', 'a', 'n'};
+	CHECK(Base64Url(man, 3) == "TWFu");
+	CHECK(Sha256Hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+	CHECK(Sha256Hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+	CHECK(Sha256Hex(std::string(1000, 'a')) == "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3");
+}
+
 }  // namespace
 
 int main() {
@@ -187,6 +265,7 @@ int main() {
 	TestDetectMod();
 	TestBoard();
 	TestLayout();
+	TestRelay();
 	std::printf("%d checks, %d failed\n", g_checks, g_failed);
 	return g_failed == 0 ? 0 : 1;
 }
