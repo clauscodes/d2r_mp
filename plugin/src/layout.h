@@ -14,7 +14,9 @@ namespace rooms {
 
 inline constexpr const char* kPluginId = "d2r-rooms";
 // The pool: panel "Rooms<slot>" with its layout at its own path.
-inline constexpr int kPanelSlots = 64;
+// D2RLoader limits a plugin's panels (65 did not all register): the D2R
+// Rooms button and the TCP/IP panel's slot come first, then up to 48 more.
+inline constexpr int kPanelSlots = 48;
 std::string PanelLocalId(int slot);  // "Rooms7"
 std::string PanelName(int slot);     // "d2r-rooms/Rooms7"
 std::string PanelPath(int slot);     // "data/global/ui/layouts/d2r-rooms/Rooms7hd.json"

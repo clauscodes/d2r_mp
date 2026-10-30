@@ -49,7 +49,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.8.0",
+	.version     = "0.8.1",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -69,6 +69,7 @@ D2RL::Panels::RegistrationHandle    g_pool[kPanelSlots] {};
 D2RL::Resources::RegistrationHandle g_poolLayout[kPanelSlots] {};
 int g_slot = -1;
 int g_nextSlot = 0;
+int g_poolSize = 0;  // as many as D2RLoader took, up to kPanelSlots
 D2RL::Panels::RegistrationHandle    g_tabPanel = D2RL::Panels::InvalidHandle;
 D2RL::Resources::RegistrationHandle g_tabLayout = D2RL::Resources::InvalidHandle;
 
@@ -334,8 +335,8 @@ PanelView g_shownView;  // the layout last given to D2R: its buttons are matched
 
 void ApplyLayoutText(PanelView& view) {
 	if (g_panelOpen && g_slot >= 0) g_panels->closePanel(g_ctx, g_pool[g_slot]);
-	const int slot = g_nextSlot++ % kPanelSlots;
-	if (g_nextSlot == kPanelSlots + 1) Log("panel: the pool of %d panels is used up; reusing them", kPanelSlots);
+	const int slot = g_nextSlot++ % g_poolSize;
+	if (g_nextSlot == g_poolSize + 1) Log("panel: the pool of %d panels is used up; reusing them", g_poolSize);
 	view.slot = slot;
 	g_slot = slot;
 	g_shownView = view;
@@ -1264,6 +1265,25 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	for (const RelayServer& r : g_relayCfg.relays) Log("relay: %s = %s%s", r.name.c_str(), r.url.c_str(), r.key.empty() ? "" : " (with a key)");
 	Log("command line: %s", GetCommandLineA());  // does D2RLoader's -mod reach D2R.exe?
 
+	// The D2R Rooms button on D2RLoader's window first: a fixed layout. (In 0.8 it
+	// came after 64 pool panels and did not register: D2RLoader has a limit.)
+	const std::string tabLayout = TabLayout();
+	const D2RL::Resources::ResourceRegistration tabResource {
+		.structSize = D2RL::Resources::ResourceRegistrationSize,
+		.flags      = 0,
+		.path       = kTabPanelPath,
+		.bytes      = tabLayout.data(),
+		.byteCount  = tabLayout.size(),
+	};
+	const D2RL::Panels::PanelRegistration tab {
+		.structSize = D2RL::Panels::PanelRegistrationSize,
+		.flags      = D2RL::Panels::PanelFlags::None,
+		.localId    = kTabPanelLocalId,
+	};
+	if (g_resources->registerResource(context, &tabResource, &g_tabLayout) != D2RL::Resources::Result::Success ||
+	    g_panels->registerPanel(context, &tab, &g_tabPanel) != D2RL::Panels::Result::Success)
+		D2RL::LogWarn(context, "d2r-rooms: the tab beside BROWSE GAMES did not register");
+
 	// The pool of rooms panels, each with a layout before it is registered;
 	// every later layout replaces one before that panel's first open.
 	for (int slot = 0; slot < kPanelSlots; ++slot) {
@@ -1286,28 +1306,17 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 		};
 		if (g_resources->registerResource(context, &resource, &g_poolLayout[slot]) != D2RL::Resources::Result::Success ||
 		    g_panels->registerPanel(context, &panel, &g_pool[slot]) != D2RL::Panels::Result::Success) {
-			D2RL::LogError(context, "d2r-rooms: panel registration failed");
-			return false;
+			if (g_resources && g_poolLayout[slot] != D2RL::Resources::InvalidHandle) g_resources->unregisterResource(context, g_poolLayout[slot]);
+			g_poolLayout[slot] = D2RL::Resources::InvalidHandle;
+			break;
 		}
+		g_poolSize = slot + 1;
 	}
-
-	// The tab button beside D2RLoader's BROWSE GAMES: a fixed layout.
-	const std::string tabLayout = TabLayout();
-	const D2RL::Resources::ResourceRegistration tabResource {
-		.structSize = D2RL::Resources::ResourceRegistrationSize,
-		.flags      = 0,
-		.path       = kTabPanelPath,
-		.bytes      = tabLayout.data(),
-		.byteCount  = tabLayout.size(),
-	};
-	const D2RL::Panels::PanelRegistration tab {
-		.structSize = D2RL::Panels::PanelRegistrationSize,
-		.flags      = D2RL::Panels::PanelFlags::None,
-		.localId    = kTabPanelLocalId,
-	};
-	if (g_resources->registerResource(context, &tabResource, &g_tabLayout) != D2RL::Resources::Result::Success ||
-	    g_panels->registerPanel(context, &tab, &g_tabPanel) != D2RL::Panels::Result::Success)
-		D2RL::LogWarn(context, "d2r-rooms: the tab beside BROWSE GAMES did not register");
+	Log("panels: %d in the pool", g_poolSize);
+	if (g_poolSize == 0) {
+		D2RL::LogError(context, "d2r-rooms: panel registration failed");
+		return false;
+	}
 
 	const D2RL::SharedEvents::UiMessageListener listener {
 		.structSize = D2RL::SharedEvents::UiMessageListenerSize,
