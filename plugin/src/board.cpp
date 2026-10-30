@@ -204,6 +204,16 @@ std::string RoomLine(const Room& room) {
 	return line;
 }
 
+RoomColumns Columns(const Room& room) {
+	RoomColumns c;
+	c.name = room.name + " [" + room.code + "]" + (room.locked ? " (password)" : "");
+	c.game = Capital(room.difficulty) + (room.mode == "hardcore" ? " HC" : "") + (room.act >= 1 ? ", Act " + std::to_string(room.act) : "");
+	c.players = std::to_string(room.playersCount) + "/" + std::to_string(room.maxPlayers);
+	c.version = ModLabel(room.mod);
+	c.connection = room.relayUrl.empty() ? "direct" : std::string("relay: ") + RelayStateLabel(room.relayState);
+	return c;
+}
+
 std::string PlayersLine(const Room& room) {
 	std::string line;
 	for (const Player& p : room.players) {

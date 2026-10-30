@@ -2,6 +2,7 @@
 // panel layout. Plain asserts with a report; no framework needed.
 
 #include <cstdio>
+#include <fstream>
 #include <string>
 
 #include "board.h"
@@ -203,10 +204,18 @@ void TestLayout() {
 		joins2 += name.rfind("Join", 0) == 0;
 		emptyText |= c["type"].asString() == "TextBoxWidget" && c["fields"]["text"].asString().empty();
 	}
-	CHECK(passwordShown && !createShown && tabs);
+	CHECK(!passwordShown && !createShown && tabs);
 	CHECK(joins2 == std::min<size_t>(view.rooms.size(), kRowsPerPage));
 	CHECK(!emptyText);
 	CHECK((*layout)["fields"]["anchor"]["y"].asNumber() == 0);
+
+	// Join on a locked room asks for its password in the window.
+	view.passwordFor = "test";
+	layout = json::Parse(PanelLayout(view));
+	bool passwordAsked = false;
+	for (size_t i = 0; i < (*layout)["children"].size(); ++i) passwordAsked |= (*layout)["children"][i]["name"].asString() == "RoomName";
+	CHECK(passwordAsked);
+	view.passwordFor.clear();
 
 	// The title carries the layout's number: the plugin checks D2R shows the latest.
 	view.generation = 7;
@@ -307,7 +316,30 @@ void TestRelay() {
 
 }  // namespace
 
-int main() {
+// tests --dump <dir>: the D2R Rooms window (a list, and a password asked for)
+// and the tab button as JSON, for a picture of the layout without the game.
+int Dump(const std::string& dir) {
+	PanelView view;
+	view.rooms = *ParseRooms(R"({"rooms":[
+		{"room_id":"a","code":"EL9A","name":"test","mod":{"id":"d2r-vr","version":"0.189.0"},"difficulty":"normal","mode":"softcore",
+		 "act":1,"max_players":8,"players_count":1,"locked":true,"players":[],"relay_url":"wss://d2r-rooms-relay.d2r-rooms.workers.dev"},
+		{"room_id":"b","code":"K7QX","name":"Baal runs","mod":{"id":"d2r-vr","version":"0.189.0"},"difficulty":"hell","mode":"softcore",
+		 "act":5,"max_players":8,"players_count":3,"locked":false,
+		 "players":[{"name":"Sergious","class":"paladin","level":92,"act":5,"host":true},{"name":"Ama","class":"amazon","level":88,"act":5}]}]})");
+	view.rooms[0].relayState = RelayState::Active;
+	view.status = "2 open room(s) - page 1/1     Relays: D2R Rooms active";
+	view.tab = true;
+	view.generation = 1;
+	std::ofstream(dir + "/window.json") << PanelLayout(view);
+	view.passwordFor = "test";
+	view.status = "Room test has a password.     Relays: D2R Rooms active";
+	std::ofstream(dir + "/window_password.json") << PanelLayout(view);
+	std::ofstream(dir + "/tab.json") << TabLayout();
+	return 0;
+}
+
+int main(int argc, char** argv) {
+	if (argc == 3 && std::string(argv[1]) == "--dump") return Dump(argv[2]);
 	TestJson();
 	TestDetectMod();
 	TestBoard();

@@ -1,6 +1,7 @@
 #include "layout.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include "json.h"
 
@@ -18,18 +19,17 @@ constexpr int kRowStep = 150;
 
 // D2RLoader's Multiplayer window (1.3.1-beta), anchored at the top middle of
 // the screen, in layout units (2160 high): the window spans x -960..960,
-// y 131..1751, its tabs HOST GAME and BROWSE GAMES x -264..264 at y 285..384,
-// its tab content y 437..1651. Measured from screenshots and logged clicks:
+// y 131..1751, its title bar y 203..285, its tabs HOST GAME and BROWSE GAMES
+// x -264..264 at y 285..384, its Public IP box x 344..900 below the title bar. Measured from screenshots and logged clicks:
 // the plugin cannot read that window's own rect.
 constexpr int kWindowX = -960;
 constexpr int kWindowY = 131;
 constexpr int kWindowWidth = 1920;
 constexpr int kWindowHeight = 1620;
-constexpr int kTabX = 270;
-constexpr int kTabY = 285;
-constexpr int kTabWidth = 260;
-constexpr int kTabHeight = 100;
-constexpr int kContentY = 437;
+// The D2R Rooms button: right of the window's title, above its Public IP box
+// (between BROWSE GAMES and that box there are only 80 units).
+constexpr int kTabX = 520;
+constexpr int kTabY = 196;
 // FrontEnd_ButtonSmall as drawn there (measured).
 constexpr int kButtonWidth = 340;
 constexpr int kButtonHeight = 90;
@@ -105,40 +105,73 @@ void Rows(const PanelView& view, int page, int x, int top, int textW, int button
 // The D2R Rooms window: in place of D2RLoader's Multiplayer window, the same
 // size and spot, with the same three tabs. HOST GAME and BROWSE GAMES go back
 // to D2RLoader's window; this one is an ordinary panel, so its buttons and
-// its password field take clicks and typing.
+// its password field take clicks and typing. The rooms are in columns; the
+// password of a locked room is asked for when its Join is pressed.
 std::string WindowLayout(const PanelView& view, int pages, int page) {
 	const int left = 134, right = kWindowWidth - 134;
 	const int buttonX = right - kButtonWidth;
-	const int textW = buttonX - left - 40;
+	struct Column {
+		const char* title;
+		int x, width;
+	};
+	// Left of the Join buttons: Room 400, Game 220, Players 110, Version 290, Connection 230.
+	const Column cols[] = {{"Room", left, 400}, {"Game", left + 410, 220}, {"Players", left + 640, 110},
+	                       {"Version", left + 760, 290}, {"Connection", left + 1060, 230}};
+	const auto small = Style("$SmallFontSize", "left", false);
+	const auto medium = Style("$MediumFontSize", "left", false);
+
 	std::vector<std::string> children;
 	children.push_back("{\"type\":\"GridImageWidget\",\"name\":\"Background\",\"fields\":{\"filename\":\"PANEL\\\\TCP_IP\\\\TCP_IP_PanelBG\"}}");
-	children.push_back("{\"type\":\"TextBoxWidget\",\"name\":\"Title" + std::to_string(view.generation) + "\",\"fields\":{\"rect\":" + Rect(0, 30, kWindowWidth, 90) +
-		",\"text\":\"Multiplayer\",\"style\":\"$StyleTitleBlock\"}}");
+	children.push_back("{\"type\":\"TextBoxWidget\",\"name\":\"Title" + std::to_string(view.generation) + "\",\"fields\":{\"rect\":" +
+		Rect(0, 30, kWindowWidth, 90) + ",\"text\":\"Multiplayer\",\"style\":\"$StyleTitleBlock\"}}");
 	children.push_back(
 		"{\"type\":\"ButtonWidget\",\"name\":\"Close\",\"fields\":{\"rect\":" + Rect(kWindowWidth - 90, 9) +
 		",\"filename\":\"PANEL\\\\closebtn_4x\",\"hoveredFrame\":3,\"onClickMessage\":\"" + std::string(kMessageTarget) + ":Close\"}}");
-	// The tabs where D2RLoader's are, ours selected.
-	children.push_back(Button("HostTab", kTabX - kWindowX - 2 * (kButtonWidth + 10), kTabY - kWindowY, "Host Game", "ToHost"));
-	children.push_back(Button("BrowseTab", kTabX - kWindowX - (kButtonWidth + 10), kTabY - kWindowY, "Browse Games", "ToBrowse"));
-	children.push_back(Button("RoomsTab", kTabX - kWindowX, kTabY - kWindowY, "D2R Rooms", "Tab"));
+	// The three tabs, D2R Rooms selected.
+	const int tabsX = (kWindowWidth - 3 * kButtonWidth - 20) / 2, tabsY = 150;
+	children.push_back(Button("HostTab", tabsX, tabsY, "Host Game", "ToHost"));
+	children.push_back(Button("BrowseTab", tabsX + kButtonWidth + 10, tabsY, "Browse Games", "ToBrowse"));
+	children.push_back(Button("RoomsTab", tabsX + 2 * (kButtonWidth + 10), tabsY, "D2R Rooms", "Tab"));
 
-	const int top = kContentY - kWindowY;
-	if (!view.status.empty())
-		children.push_back(Text("Status", Rect(left, top, right - left, 70), view.status, Style("$SmallFontSize", "center", true)));
-	Rows(view, page, left, top + 90, textW, buttonX, children);
-
-	const int bottom = top + 90 + kRowsPerPage * kRowStep + 20;
-	if (view.hosting) {
-		children.push_back(Text("Hosting", Rect(left, bottom, textW, 120), view.hostingText, Style("$SmallFontSize", "left", true)));
-		children.push_back(Button("CloseRoom", buttonX, bottom + 10, "Close room", "CloseRoom"));
-	} else {
-		children.push_back(Text("NameLabel", Rect(left, bottom, 700, 40), "Password of a locked room", Style("$SmallFontSize", "left", false)));
-		children.push_back(PasswordField(left + 40, bottom + 75));
+	int y = 280;
+	if (!view.status.empty()) children.push_back(Text("Status", Rect(left, y, right - left, 60), view.status, Style("$SmallFontSize", "center", true)));
+	y += 80;
+	for (const Column& c : cols) children.push_back(Text(std::string("Head") + c.title, Rect(c.x, y, c.width, 50), c.title, small));
+	y += 60;
+	const size_t first = static_cast<size_t>(page) * kRowsPerPage;
+	for (int i = 0; i < kRowsPerPage && first + i < view.rooms.size(); ++i) {
+		const Room& room = view.rooms[first + i];
+		const RoomColumns c = Columns(room);
+		const int rowY = y + i * kRowStep;
+		const std::string n = std::to_string(i);
+		const std::string cells[] = {c.name, c.game, c.players, c.version, c.connection};
+		for (size_t k = 0; k < std::size(cells); ++k)
+			if (!cells[k].empty()) children.push_back(Text("Cell" + n + "_" + std::to_string(k), Rect(cols[k].x, rowY, cols[k].width, 60), cells[k], k ? small : medium));
+		// No empty text widgets: a room without player details shows no players line.
+		const std::string players = PlayersLine(room);
+		if (!players.empty())
+			children.push_back(Text("Players" + n, Rect(left, rowY + 60, buttonX - left - 20, 60), players, Style("$SmallFontSize", "left", true)));
+		children.push_back(Button("Join" + n, buttonX, rowY + 10, "Join", "Join", n));
 	}
-	const int y = kWindowHeight - kButtonHeight - 40;
-	if (page > 0) children.push_back(Button("Prev", left, y, "Back", "Prev"));
-	children.push_back(Button("Refresh", (kWindowWidth - kButtonWidth) / 2, y, "Refresh", "Refresh"));
-	if (page + 1 < pages) children.push_back(Button("Next", buttonX, y, "More", "Next"));
+
+	const int bottom = y + kRowsPerPage * kRowStep + 10;
+	if (!view.passwordFor.empty()) {
+		// Join on a locked room: its password, then Join or Cancel.
+		children.push_back(Text("PasswordLabel", Rect(left, bottom, right - left, 50), "Password for " + view.passwordFor + ":", small));
+		children.push_back(PasswordField(left + 40, bottom + 85));
+		children.push_back(Button("PasswordJoin", buttonX - kButtonWidth - 20, bottom + 60, "Join", "JoinWithPassword"));
+		children.push_back(Button("PasswordCancel", buttonX, bottom + 60, "Cancel", "CancelPassword"));
+	} else if (view.hosting) {
+		children.push_back(Text("Hosting", Rect(left, bottom, buttonX - left - 20, 120), view.hostingText, Style("$SmallFontSize", "left", true)));
+		children.push_back(Button("CloseRoom", buttonX, bottom + 10, "Close room", "CloseRoom"));
+	}
+	// The page buttons, except while a password is asked for.
+	const int buttonsY = kWindowHeight - kButtonHeight - 50;
+	if (view.passwordFor.empty()) {
+		if (page > 0) children.push_back(Button("Prev", left, buttonsY, "Back", "Prev"));
+		children.push_back(Button("Refresh", (kWindowWidth - kButtonWidth) / 2, buttonsY, "Refresh", "Refresh"));
+		if (page + 1 < pages) children.push_back(Button("Next", buttonX, buttonsY, "More", "Next"));
+	}
 	return Panel(kPanelName, "{\"x\":0.5,\"y\":0}", Rect(kWindowX, kWindowY, kWindowWidth, kWindowHeight), kLoaderPriority, children);
 }
 
@@ -192,7 +225,7 @@ std::vector<HitArea> TabHitAreas() {
 }
 
 std::string TabLayout() {
-	return Panel(kTabPanelName, "{\"x\":0.5,\"y\":0}", Rect(kTabX, kTabY, kTabWidth, kTabHeight), kLoaderPriority,
+	return Panel(kTabPanelName, "{\"x\":0.5,\"y\":0}", Rect(kTabX, kTabY, kButtonWidth, kButtonHeight), kLoaderPriority,
 	             {Button("Tab", 0, 0, "D2R Rooms", "Tab")});
 }
 

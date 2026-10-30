@@ -89,4 +89,14 @@ std::string HeartbeatBody(int act, int level, std::string_view relayJson = {});
 std::string RoomLine(const Room& room);
 std::string PlayersLine(const Room& room);
 
+// The same, in the D2R Rooms window's columns.
+struct RoomColumns {
+	std::string name;        // "test [EL9A]", "(password)" when locked
+	std::string game;        // "Normal HC, Act 1"
+	std::string players;     // "1/8"
+	std::string version;     // "Authentic 0.189.0"
+	std::string connection;  // "relay: active" or "direct"
+};
+RoomColumns Columns(const Room& room);
+
 }  // namespace rooms

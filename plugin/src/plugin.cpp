@@ -49,7 +49,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.5.1",
+	.version     = "0.6.0",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -87,7 +87,8 @@ constexpr const char* kLoaderMessage = "D2RLoaderMultiplayerPanelMessage";
 bool g_panelOpen = false;
 bool g_loaderUi = false;  // D2RLoader's Multiplayer window is open
 bool g_tabButtonOpen = false;  // the D2R Rooms tab button beside its BROWSE GAMES
-bool g_tabActive = false;      // that tab is selected: the list shows in the window
+bool g_tabActive = false;      // the D2R Rooms window is open in place of D2RLoader's
+std::optional<Room> g_passwordRoom;  // Join was pressed on this locked room
 struct JoinFlow {
 	int step = 0;  // 0 = idle
 	int ticks = 0;
@@ -305,8 +306,9 @@ PanelView CurrentView() {
 		for (Room& r : view.rooms)
 			if (!r.relayUrl.empty()) r.relayState = StateOf(r.relayUrl);
 		view.page = g_page;
-		view.status = g_status + "     " + RelaysLine();
+		view.status = g_status.empty() ? RelaysLine() : g_status + "     " + RelaysLine();
 		view.tab = g_tabActive;
+		if (g_passwordRoom) view.passwordFor = g_passwordRoom->name;
 		view.hosting = g_hosted.has_value();
 		if (g_hosted && g_hostRelay)
 			view.hostingText = "You host room [" + g_hosted->code + "]. Your port cannot be reached from outside, so friends join through relay " +
@@ -658,6 +660,8 @@ void JoinThroughRelay(JoinAnswer answer) {
 	OnUi([answer] { StartJoin(answer); });
 }
 
+void JoinRoom(const Room& room, const std::string& password);
+
 void Join(int row) {
 	Room room;
 	{
@@ -666,6 +670,14 @@ void Join(int row) {
 		if (row < 0 || index >= g_rooms.size()) return;
 		room = g_rooms[index];
 	}
+	// In the D2R Rooms window a locked room's password is asked for now; the
+	// TCP/IP panel's field is filled in before Join.
+	if (room.locked && g_tabActive) {
+		g_passwordRoom = room;
+		SetStatus("Room " + room.name + " has a password.");
+		ApplyLayout();
+		return;
+	}
 	const std::string password = room.locked ? ReadInput(kPanelName, {"RoomName"}) : std::string();
 	if (room.locked && password.empty()) {
 		Log("join: room %s has a password, the field is empty", room.code.c_str());
@@ -673,6 +685,10 @@ void Join(int row) {
 		ApplyLayout();
 		return;
 	}
+	JoinRoom(room, password);
+}
+
+void JoinRoom(const Room& room, const std::string& password) {
 	ReadModVersion();
 	Log("join: room %s (%s; mine %s)", room.code.c_str(), ModLabel(room.mod).c_str(), ModLabel(g_mod).c_str());
 	// D2RLoader joins only the same shared plugins: say so before it refuses.
@@ -944,6 +960,20 @@ void HandleOwn(const std::string& command, const std::string& text) {
 	if (command == "Close") {
 		g_tabActive = false;
 		ShowPanel(false);
+	} else if (command == "JoinWithPassword" && g_passwordRoom) {
+		const std::string password = ReadInput(kPanelName, {"RoomName"});
+		if (password.empty()) {
+			SetStatus("Type the password of " + g_passwordRoom->name + " first.");
+			ApplyLayout();
+			return;
+		}
+		const Room room = *g_passwordRoom;
+		g_passwordRoom.reset();
+		JoinRoom(room, password);
+	} else if (command == "CancelPassword") {
+		g_passwordRoom.reset();
+		SetStatus("");
+		ApplyLayout();
 	} else if (command == "Tab") {
 		if (g_loaderUi) EnterTab();  // in the D2R Rooms window it is the selected tab
 	} else if (command == "ToHost" || command == "ToBrowse") {

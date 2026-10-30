@@ -33,6 +33,8 @@ struct PanelView {
 	bool tab = false;
 	// Names the title widget ("Title12"): the plugin checks which layout D2R shows.
 	int generation = 0;
+	// Join was pressed on this locked room: its password is asked for.
+	std::string passwordFor;
 };
 
 int PageCount(size_t roomCount);
