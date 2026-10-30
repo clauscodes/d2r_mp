@@ -258,6 +258,33 @@ void TestRelay() {
 	CHECK(cfg.relays[2].url == "ws://127.0.0.1:8080");
 	CHECK(ParseRelayIni("[relay]\nmode=never\n").mode == RelayMode::Never);
 
+	// The bridge on or off, and the relay chosen to host on.
+	CHECK(ParseRelayIni("").enabled && ParseRelayIni(DefaultRelayIni()).enabled && ParseRelayIni(DefaultRelayIni()).use.empty());
+	CHECK(!ParseRelayIni("[relay]\nenabled = no\n").enabled && !ParseRelayIni("[relay]\r\nEnabled=Off\r\n").enabled);
+	CHECK(ParseRelayIni("[relay]\nenabled = yes\n").enabled && ParseRelayIni("[relays]\nenabled = no\n").enabled);
+	cfg = ParseRelayIni("[relay]\nuse = local\n[relays]\nA = wss://a.net\nB = wss://b.net\nLocal = ws://127.0.0.1:8080\n");
+	auto order = HostOrder(cfg);
+	CHECK(order.size() == 3 && order[0].name == "Local" && order[1].name == "A" && order[2].name == "B");
+	cfg.use = "nobody";
+	CHECK(HostOrder(cfg)[0].name == "A");
+
+	// The status file D2R VR Settings reads.
+	BridgeStatus st;
+	st.plugin = "0.9.5";
+	st.config = ParseRelayIni("[relay]\nenabled = no\nuse = B\n[relays]\nA = wss://a.net\nB = wss://b.net\n");
+	st.health = {RelayHealth {RelayState::Active, 0.25, "A"}};
+	st.rooms.push_back(Room {.code = "EL9A", .name = "test \"1\"", .relayUrl = "wss://b.net"});
+	st.hostingCode = "EL9A";
+	st.hostingRelay = "B";
+	const auto sj = json::Parse(StatusJson(st));
+	CHECK(sj && !(*sj)["bridge"]["enabled"].asBool(true) && (*sj)["bridge"]["use"].asString() == "B" && (*sj)["plugin"].asString() == "0.9.5");
+	CHECK(sj && (*sj)["relays"].size() == 2 && (*sj)["relays"][0]["state"].asString() == "active" && (*sj)["relays"][0]["usage"].asNumber() == 0.25);
+	CHECK(sj && (*sj)["relays"][1]["usage"].isNull() && (*sj)["relays"][1]["first"].asBool() && !(*sj)["relays"][0]["first"].asBool(true));
+	CHECK(sj && (*sj)["rooms"].size() == 1 && (*sj)["rooms"][0]["name"].asString().find("test \"1\"") == 0);
+	CHECK(sj && (*sj)["hosting"]["room"].asString() == "EL9A" && (*sj)["hosting"]["relay"].asString() == "B");
+	st.hostingCode.clear();
+	CHECK(json::Parse(StatusJson(st)) && (*json::Parse(StatusJson(st)))["hosting"].isNull());
+
 	auto u = ParseRelayUrl("wss://relay.example.net:8443/d2r");
 	CHECK(u && u->secure && u->host == "relay.example.net" && u->port == 8443 && u->path == "/d2r");
 	u = ParseRelayUrl("ws://127.0.0.1:8787");

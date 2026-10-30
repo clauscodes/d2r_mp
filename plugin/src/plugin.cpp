@@ -50,7 +50,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.9.4",
+	.version     = "0.9.5",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -123,7 +123,8 @@ std::mutex g_heartbeatMu;
 std::condition_variable g_heartbeatCv;
 bool g_heartbeatStop = false;
 
-// Relays. Set at load, read-only afterwards.
+// Relays: d2r-rooms.ini, read at load and again on every CREATE GAME (D2R VR
+// Settings may have changed it). Under g_mu; threads take a copy.
 RelayConfig g_relayCfg;
 std::string g_gameDir;  // the folder of D2R.exe, with a trailing backslash
 // Under g_mu: each relay's last /healthz answer, and when it came.
@@ -299,7 +300,8 @@ std::string RelaysLine() {  // under g_mu
 		line += line.empty() ? "Relays: " : ", ";
 		line += r.name + " " + RelayStateLabel(StateOf(r.url));
 	}
-	if (g_relayCfg.mode == RelayMode::Never) line += " (off: mode = never)";
+	if (!g_relayCfg.enabled) line += " (off: enabled = no)";
+	else if (g_relayCfg.mode == RelayMode::Never) line += " (off: mode = never)";
 	return line;
 }
 
@@ -308,7 +310,42 @@ void ApplyLayoutText(PanelView& view);
 void OpenLater(int gen, int ticks);
 int g_layoutGen = 0;  // bumps with every layout, UI thread
 
+// d2r-rooms-status.json beside the DLL, for D2R VR Settings' Multiplayer tab:
+// rewritten with every layout (a list, a relay check, hosting). Any thread.
+void WriteStatusFile() {
+	BridgeStatus s;
+	s.plugin = kInfo.version;
+	s.board = g_server;
+	SYSTEMTIME t {};
+	GetSystemTime(&t);
+	char when[32];
+	std::snprintf(when, sizeof(when), "%04u-%02u-%02uT%02u:%02u:%02uZ", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+	s.updated = when;
+	{
+		std::lock_guard lock(g_mu);
+		s.config = g_relayCfg;
+		for (const RelayServer& r : g_relayCfg.relays) {
+			const auto it = g_relayStates.find(r.url);
+			s.health.push_back(it == g_relayStates.end() ? RelayHealth {} : it->second.health);
+		}
+		s.rooms = g_rooms;
+		for (Room& r : s.rooms)
+			if (!r.relayUrl.empty()) r.relayState = StateOf(r.relayUrl);
+		if (g_hosted) s.hostingCode = g_hosted->code;
+		if (g_hosted && g_hostRelay) s.hostingRelay = g_hostRelayName;
+	}
+	const std::string path = DllDir() + "d2r-rooms-status.json";
+	const std::string tmp = path + ".tmp";
+	{
+		std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+		f << StatusJson(s);
+		if (!f) return;
+	}
+	MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
 void ApplyLayout() {
+	WriteStatusFile();
 	PanelView view = CurrentView();
 	view.generation = ++g_layoutGen;
 	ApplyLayoutText(view);
@@ -1004,12 +1041,16 @@ void StartHostRelay(int session, int attempt) {
 		hosted = g_hosted;
 	}
 	if (!hosted || session != g_hostSession) return;
-	std::vector<RelayHealth> states;
-	const RelayServer relay = net::PickRelay(g_relayCfg.relays, &states);
+	std::vector<RelayServer> order;
 	{
 		std::lock_guard lock(g_mu);
-		for (size_t i = 0; i < states.size() && i < g_relayCfg.relays.size(); ++i)
-			g_relayStates[g_relayCfg.relays[i].url] = {states[i], std::chrono::steady_clock::now()};
+		order = HostOrder(g_relayCfg);
+	}
+	std::vector<RelayHealth> states;
+	const RelayServer relay = net::PickRelay(order, &states);
+	{
+		std::lock_guard lock(g_mu);
+		for (size_t i = 0; i < states.size() && i < order.size(); ++i) g_relayStates[order[i].url] = {states[i], std::chrono::steady_clock::now()};
 	}
 	if (relay.url.empty()) {
 		Log("host: no relay takes new rooms");
@@ -1072,8 +1113,13 @@ void StartHostRelay(int session, int attempt) {
 // the hosted port from outside once the game listens. Only a "blocked" answer
 // starts a relay (mode = auto). On a thread of its own.
 void WatchHosting(int session, size_t logStart) {
-	if (g_relayCfg.mode == RelayMode::Never) return;
-	if (g_relayCfg.mode == RelayMode::Always) {
+	RelayMode mode;
+	{
+		std::lock_guard lock(g_mu);
+		mode = g_relayCfg.mode;
+	}
+	if (mode == RelayMode::Never) return;
+	if (mode == RelayMode::Always) {
 		StartHostRelay(session, 0);
 		return;
 	}
@@ -1121,6 +1167,23 @@ void StopHosting(bool removeFromBoard) {
 	OnUi(ApplyLayout);
 }
 
+// Reads d2r-rooms.ini beside the DLL (written with ours when missing) and
+// returns whether the bridge is on.
+bool LoadRelayConfig() {
+	const std::string ini = DllDir() + kRelayIniName;
+	std::string iniText = ReadText(ini);
+	if (iniText.empty()) {
+		iniText = DefaultRelayIni();
+		std::ofstream(ini, std::ios::binary) << iniText;
+	}
+	RelayConfig cfg = ParseRelayIni(iniText);
+	Log("relays: %s, mode %s, use '%s', game_port %d, %zu relay(s) in %s", cfg.enabled ? "on" : "off", RelayModeName(cfg.mode), cfg.use.c_str(),
+	    GamePort(), cfg.relays.size(), ini.c_str());
+	std::lock_guard lock(g_mu);
+	g_relayCfg = std::move(cfg);
+	return g_relayCfg.enabled;
+}
+
 // Lists the room. `loader`: D2RLoader's CREATE GAME was pressed and goes on to
 // host by itself; otherwise this goes on like D2R's own Host Game button.
 void CreateRoom(std::string name, const std::string& password, bool loader) {
@@ -1166,6 +1229,10 @@ void Create() {
 // D2RLoader's CREATE GAME: the same room, named as its game. A room still
 // listed from an earlier try is replaced. UI thread, before D2RLoader acts.
 void CreateFromLoader() {
+	if (!LoadRelayConfig()) {
+		Log("host: the bridge is off (enabled = no); CREATE GAME is D2RLoader's alone");
+		return;
+	}
 	const std::string name = ReadInput(kLoaderPanel, {"HostGameNameInput"});
 	const std::string password = ReadInput(kLoaderPanel, {"HostPasswordInput"});
 	if (Hosting()) StopHosting(true);
@@ -1523,14 +1590,7 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	// Relays: d2r-rooms.ini beside the DLL, written with ours when missing.
 	g_gameDir = ExeDir();
 	net::StartNetworking();
-	const std::string ini = DllDir() + kRelayIniName;
-	std::string iniText = ReadText(ini);
-	if (iniText.empty()) {
-		iniText = DefaultRelayIni();
-		std::ofstream(ini, std::ios::binary) << iniText;
-	}
-	g_relayCfg = ParseRelayIni(iniText);
-	Log("relays: mode %s, game_port %d, %zu relay(s) in %s", RelayModeName(g_relayCfg.mode), GamePort(), g_relayCfg.relays.size(), ini.c_str());
+	LoadRelayConfig();
 	for (const RelayServer& r : g_relayCfg.relays) Log("relay: %s = %s%s", r.name.c_str(), r.url.c_str(), r.key.empty() ? "" : " (with a key)");
 	Log("command line: %s", GetCommandLineA());  // does D2RLoader's -mod reach D2R.exe?
 

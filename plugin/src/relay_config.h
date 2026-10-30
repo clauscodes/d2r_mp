@@ -29,7 +29,9 @@ enum class RelayMode {
 };
 
 struct RelayConfig {
+	bool enabled = true;  // off: CREATE GAME is D2RLoader's alone (its own error when the port is closed)
 	RelayMode mode = RelayMode::Auto;
+	std::string use;                  // the relay to host on, by name; "" = the first that answers
 	std::vector<RelayServer> relays;  // in the player's order; never empty after parsing
 };
 
@@ -38,6 +40,8 @@ std::string DefaultRelayIni();
 // Unknown lines are skipped; no [relays] entry at all gives ours alone.
 RelayConfig ParseRelayIni(std::string_view text);
 const char* RelayModeName(RelayMode mode);
+// The relays in the order a host tries them: `use` first, then the rest.
+std::vector<RelayServer> HostOrder(const RelayConfig& cfg);
 
 // d2rloader.toml: [d2rloader.advanced] game_port, used for hosting and joining.
 int ParseGamePort(std::string_view toml);

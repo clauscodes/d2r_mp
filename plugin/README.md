@@ -59,8 +59,16 @@ UPnP / PCP / NAT-PMP could not open the router), the room goes through a relay
   into Join Game. If the relay refuses or does not answer, the host's address is
   tried as before.
 - **The list:** `d2rloader/plugins/d2r-rooms.ini`, written with ours on the
-  first start. `mode = auto | always | never`; one `name = wss://address [key]`
-  line per relay. Guide: [docs/host_a_relay.md](../docs/host_a_relay.md).
+  first start. `enabled = yes | no` (the bridge on or off: off leaves D2RLoader's
+  CREATE GAME alone, with its own error when the port is closed), `mode = auto |
+  always | never`, `use = <relay name>` (the relay to host on; empty = the first
+  that answers); one `name = wss://address [key]` line per relay. Read again on
+  every CREATE GAME, so a change made while the game runs counts for the next
+  room. Guide: [docs/host_a_relay.md](../docs/host_a_relay.md).
+- **Status file:** `d2rloader/plugins/d2r-rooms-status.json`, rewritten with every
+  change while the game runs: the plugin's version, the bridge's settings, each
+  relay's state and `usage` (0..1 of its quota, from `/healthz`), the room being
+  hosted and the open rooms. D2R VR Settings' Multiplayer tab shows it.
 - **Status:** the panel's status line shows every listed relay (active / near
   its limit / limit reached / not answering), and each room that uses a relay
   shows its relay's state, from the relay's `/healthz` (asked at most once a

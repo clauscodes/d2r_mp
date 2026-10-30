@@ -99,4 +99,18 @@ struct RoomColumns {
 };
 RoomColumns Columns(const Room& room);
 
+// d2r-rooms-status.json beside the plugin: what the bridge does, for D2R VR
+// Settings' Multiplayer tab (it shows it; the toggles it writes go to d2r-rooms.ini).
+struct BridgeStatus {
+	std::string plugin;   // "0.9.5"
+	std::string updated;  // UTC, "2026-10-30T17:40:00Z"
+	std::string board;    // the room board's address
+	RelayConfig config;
+	std::vector<RelayHealth> health;  // per config.relays, Unknown when not asked yet
+	std::vector<Room> rooms;
+	std::string hostingCode;   // "" when not hosting
+	std::string hostingRelay;  // the relay's name, "" when friends connect straight
+};
+std::string StatusJson(const BridgeStatus& status);
+
 }  // namespace rooms

@@ -48,10 +48,15 @@ std::string DefaultRelayIni() {
 		"; Guide to running your own: docs/host_a_relay.md in the D2R Rooms repository.\n"
 		"\n"
 		"[relay]\n"
+		"; enabled = yes: CREATE GAME lists the room and starts a relay when friends cannot reach you\n"
+		"; enabled = no:  the plugin leaves CREATE GAME to D2RLoader (its own error when your port is closed)\n"
+		"enabled = yes\n"
 		"; auto   = only when D2RLoader reports that your port cannot be reached from outside\n"
 		"; always = every room you host goes through a relay\n"
 		"; never  = never (friends then need your port open)\n"
 		"mode = auto\n"
+		"; use = the relay to host on, by its name below; empty = the first one that answers\n"
+		"use =\n"
 		"\n"
 		"[relays]\n"
 		"; One relay per line:  name = wss://address [key]\n"
@@ -75,7 +80,12 @@ RelayConfig ParseRelayIni(std::string_view text) {
 		if (eq == std::string_view::npos) return;
 		const std::string_view name = Trim(line.substr(0, eq));
 		std::string_view value = Trim(line.substr(eq + 1));
-		if (section == "relay" && Lower(name) == "mode") {
+		if (section == "relay" && Lower(name) == "enabled") {
+			const std::string v = Lower(value);
+			cfg.enabled = !(v == "no" || v == "false" || v == "off" || v == "0");
+		} else if (section == "relay" && Lower(name) == "use") {
+			cfg.use = std::string(value);
+		} else if (section == "relay" && Lower(name) == "mode") {
 			const std::string v = Lower(value);
 			if (v == "always") cfg.mode = RelayMode::Always;
 			else if (v == "never") cfg.mode = RelayMode::Never;
@@ -100,6 +110,13 @@ const char* RelayModeName(RelayMode mode) {
 		case RelayMode::Never: return "never";
 		default: return "auto";
 	}
+}
+
+std::vector<RelayServer> HostOrder(const RelayConfig& cfg) {
+	std::vector<RelayServer> order = cfg.relays;
+	const auto it = std::find_if(order.begin(), order.end(), [&](const RelayServer& r) { return Lower(r.name) == Lower(cfg.use); });
+	if (it != order.end()) std::rotate(order.begin(), it, it + 1);
+	return order;
 }
 
 int ParseGamePort(std::string_view toml) {

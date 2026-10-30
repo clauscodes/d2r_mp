@@ -36,10 +36,15 @@ The plugin writes `d2r-rooms.ini` beside its DLL the first time the game starts:
 
 ```ini
 [relay]
+; enabled = yes: CREATE GAME lists the room and starts a relay when friends cannot reach you
+; enabled = no:  the plugin leaves CREATE GAME to D2RLoader (its own error when your port is closed)
+enabled = yes
 ; auto   = only when D2RLoader reports that your port cannot be reached from outside
 ; always = every room you host goes through a relay
 ; never  = never (friends then need your port open)
 mode = auto
+; use = the relay to host on, by its name below; empty = the first one that answers
+use =
 
 [relays]
 ; One relay per line:  name = wss://address [key]
@@ -48,11 +53,12 @@ D2R Rooms = wss://d2r-rooms-relay.d2r-rooms.workers.dev
 
 - **Add a relay:** one line under `[relays]`, as `name = wss://address`. A private relay also needs its key after a space:
   `Friends = wss://relay.friends.net their-key-here`.
-- **Order matters for hosting.** The first relay that answers and takes new rooms gets your room. Put yours first to
-  prefer it, or delete ours if you never want it.
+- **Choose the relay you host on** with `use = Friends` (its name). Without it the order counts: the first relay that
+  answers and takes new rooms gets your room. The chosen one is tried first; when it does not answer or is full, the
+  others are tried in order.
 - **Joining always uses the host's relay**, whatever is in your own list. You do not need the host's relay in your list,
   or its key: the room gives you a one-room pass.
-- Save the file and restart the game. The D2R Rooms panel shows each relay's status on its status line, for example
+- Save the file; it is read again on every CREATE GAME (a restart is not needed). The D2R Rooms panel shows each relay's status on its status line, for example
   `Relays: Friends active, D2R Rooms near its limit`.
 
 ## 3. Run a relay on Cloudflare

@@ -1,6 +1,7 @@
 #include "board.h"
 
 #include <cctype>
+#include <cstdio>
 
 #include "json.h"
 
@@ -202,6 +203,47 @@ std::string RoomLine(const Room& room) {
 	line += "   " + ModLabel(room.mod);
 	if (!room.relayUrl.empty()) line += std::string("   relay: ") + RelayStateLabel(room.relayState);
 	return line;
+}
+
+namespace {
+
+const char* StateCode(RelayState state) {
+	switch (state) {
+		case RelayState::Active: return "active";
+		case RelayState::NearLimit: return "near_limit";
+		case RelayState::Limit: return "limit";
+		case RelayState::NoAnswer: return "no_answer";
+		default: return "unknown";
+	}
+}
+
+}  // namespace
+
+std::string StatusJson(const BridgeStatus& s) {
+	using json::Quote;
+	std::string out = "{\"plugin\":" + Quote(s.plugin) + ",\"updated\":" + Quote(s.updated) + ",\"board\":" + Quote(s.board);
+	out += ",\"bridge\":{\"enabled\":" + std::string(s.config.enabled ? "true" : "false") + ",\"mode\":" + Quote(RelayModeName(s.config.mode)) +
+	       ",\"use\":" + Quote(s.config.use) + "}";
+	out += ",\"relays\":[";
+	const std::vector<RelayServer> order = HostOrder(s.config);
+	for (size_t i = 0; i < s.config.relays.size(); ++i) {
+		const RelayServer& r = s.config.relays[i];
+		const RelayHealth h = i < s.health.size() ? s.health[i] : RelayHealth {};
+		char usage[32] = "null";
+		if (h.usage >= 0) std::snprintf(usage, sizeof(usage), "%.3f", h.usage);
+		out += std::string(i ? "," : "") + "{\"name\":" + Quote(r.name) + ",\"url\":" + Quote(r.url) + ",\"state\":" + Quote(StateCode(h.state)) +
+		       ",\"usage\":" + usage + ",\"first\":" + (order[0].url == r.url ? "true" : "false") + "}";
+	}
+	out += "],\"hosting\":";
+	out += s.hostingCode.empty() ? "null"
+	                             : "{\"room\":" + Quote(s.hostingCode) + ",\"relay\":" + (s.hostingRelay.empty() ? "null" : Quote(s.hostingRelay)) + "}";
+	out += ",\"rooms\":[";
+	for (size_t i = 0; i < s.rooms.size(); ++i) {
+		const RoomColumns c = Columns(s.rooms[i]);
+		out += std::string(i ? "," : "") + "{\"name\":" + Quote(c.name) + ",\"game\":" + Quote(c.game) + ",\"players\":" + Quote(c.players) +
+		       ",\"version\":" + Quote(c.version) + ",\"connection\":" + Quote(c.connection) + ",\"who\":" + Quote(PlayersLine(s.rooms[i])) + "}";
+	}
+	return out + "]}";
 }
 
 RoomColumns Columns(const Room& room) {
