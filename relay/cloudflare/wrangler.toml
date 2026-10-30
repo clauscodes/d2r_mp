@@ -18,7 +18,7 @@ workers_dev = true
 [vars]
 RELAY_NAME = "D2R Rooms relay"
 # "paid" (Workers Paid, $5/month) or "free". Sets how the cap is counted.
-PLAN = "paid"
+PLAN = "free"
 # Paid: the whole monthly bill allowed, the plan's $5 included.
 BUDGET_USD = "10"
 PLAN_BASE_USD = "5"
