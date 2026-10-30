@@ -39,6 +39,9 @@ Copy `d2rl-d2r-rooms.dll` into `<game>/d2rloader/plugins/`. Needs D2RLoader
 SharedEvent, Widget, Thread, Http, Lifecycle). Players who host or join through
 a relay all need it; others do not.
 
+The DLL carries a Windows version resource (`FileVersion`, e.g. `0.9.7`, from
+`src/version.h`), so installers and D2R VR Settings can read which plugin is there.
+
 The board address defaults to `https://d2r-rooms.d2r-rooms.workers.dev`; the
 environment variable `D2R_ROOMS_SERVER` points it elsewhere.
 

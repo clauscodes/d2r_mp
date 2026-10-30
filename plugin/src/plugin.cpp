@@ -43,6 +43,7 @@
 #include "layout.h"
 #include "relay_config.h"
 #include "relay_net.h"
+#include "version.h"
 
 namespace {
 
@@ -53,7 +54,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.9.6",
+	.version     = D2R_ROOMS_VERSION_STR,
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
