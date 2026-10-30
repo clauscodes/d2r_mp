@@ -16,6 +16,9 @@ constexpr int kLoaderPanelX = 40;
 // D2RLoader's window starts near x = 1010 of the 3840 wide screen: the
 // panel's content stays left of that.
 constexpr int kLoaderContentRight = 900;
+// Above D2RLoader's own layers (its front-end buttons use 2000000001), so its
+// Multiplayer window's dimming does not cover the list.
+constexpr int kLoaderPriority = 2100000000;
 constexpr int kPanelWidth = 1162;
 constexpr int kPanelHeight = 1507;
 constexpr int kRowTop = 330;
@@ -121,7 +124,7 @@ std::string PanelLayout(const PanelView& view) {
 		"\",\"fields\":{\"anchor\":{\"x\":" + (view.loader ? "0" : "0.5") + ",\"y\":0.1},\"rect\":{\"x\":" +
 		std::to_string(view.loader ? kLoaderPanelX : kPanelX) +
 		",\"width\":" + std::to_string(kPanelWidth) + ",\"height\":" + std::to_string(kPanelHeight) +
-		"},\"priority\":8500},\"children\":[";
+		"},\"priority\":" + std::to_string(view.loader ? kLoaderPriority : 8500) + "},\"children\":[";
 	for (size_t i = 0; i < children.size(); ++i) {
 		if (i) out += ",";
 		out += children[i];
