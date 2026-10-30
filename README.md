@@ -10,6 +10,37 @@ running your own: [docs/host_a_relay.md](docs/host_a_relay.md)).
 
 Runs free on Cloudflare Workers + D1. Design: [SPEC.md](SPEC.md).
 
+## Install the plugin (players)
+
+**Download: [d2rl-d2r-rooms.dll](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll)**
+(plugin 0.9.6, Windows x64, [SHA-256](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll.sha256);
+sample settings: [d2r-rooms.ini](https://github.com/clauscodes/d2r_mp/raw/main/download/d2r-rooms.ini)).
+Open rooms: <https://d2r-rooms.d2r-rooms.workers.dev/>.
+
+1. Needs [D2RLoader](https://d2rloader.net/) 1.3.1 or newer. Close the game.
+2. Copy `d2rl-d2r-rooms.dll` into `<game>\d2rloader\plugins\`, beside any VR mod's
+   plugin already there (D2R VR Authentic, D2R VR Unleashed, or none).
+3. Start the game. The plugin writes `d2r-rooms.ini` beside itself on its first start;
+   the sample above is the same file.
+
+- **Host:** D2RLoader's **Multiplayer** → *HOST GAME* → **CREATE GAME**. The room is
+  listed on the board while you play. When friends cannot reach your PC (no port
+  forwarding, a router without UPnP), the game goes through a relay: both PCs dial
+  out, nobody touches a router.
+- **Join:** D2RLoader's **Multiplayer** → the **D2R Rooms** tab → **Join** on a room.
+  For a locked room, type its password first. The plugin opens *Direct Join* and
+  types the address (`127.0.0.1` when the room uses a relay).
+- **`mode`** in `d2r-rooms.ini`, `[relay]` section: `auto` (the default) uses a relay
+  only when D2RLoader reports that your port cannot be reached from outside;
+  `always` hosts every room through a relay; `never` never does. `enabled = no`
+  turns the plugin's part of *CREATE GAME* off.
+- **Everyone in one game needs the same game version and the same VR mod version**
+  (or no mod for all); otherwise D2R says *Game Data Does Not Match*. The rooms list
+  shows each room's VR version.
+- Both the host and every joiner of a relayed room need the plugin.
+
+More: [plugin/README.md](plugin/README.md); your own relay: [docs/host_a_relay.md](docs/host_a_relay.md).
+
 ## What is here
 
 | Path | What |

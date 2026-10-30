@@ -370,7 +370,7 @@ int Dump(const std::string& dir) {
 		 "act":1,"max_players":8,"players_count":1,"locked":true,"players":[],"relay_url":"wss://d2r-rooms-relay.d2r-rooms.workers.dev"},
 		{"room_id":"b","code":"K7QX","name":"Baal runs","mod":{"id":"d2r-vr","version":"0.189.0"},"difficulty":"hell","mode":"softcore",
 		 "act":5,"max_players":8,"players_count":3,"locked":false,
-		 "players":[{"name":"Sergious","class":"paladin","level":92,"act":5,"host":true},{"name":"Ama","class":"amazon","level":88,"act":5}]}]})");
+		 "players":[{"name":"Kaela","class":"paladin","level":92,"act":5,"host":true},{"name":"Ama","class":"amazon","level":88,"act":5}]}]})");
 	view.rooms[0].relayState = RelayState::Active;
 	view.status = "2 open room(s) - page 1/1     Relays: D2R Rooms active";
 	view.tab = true;

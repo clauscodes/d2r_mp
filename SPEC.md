@@ -171,4 +171,4 @@ Guide: [docs/host_a_relay.md](docs/host_a_relay.md).
 - **Ours.** Cloudflare Workers Paid ($5 a month) with a $10 monthly cap: past
   80% no new rooms, at the cap no new joiners, running games go on. Its own
   Worker (`d2r-rooms-relay`), deployed by hand only: a deploy drops relayed
-  games. Never on BodyWalk's server.
+  games. On its own account, apart from any other service.
