@@ -50,7 +50,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.9.3",
+	.version     = "0.9.4",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -647,6 +647,56 @@ void TypeChar(char c) {
 	if (HWND hwnd = GameWindow()) PostMessageW(hwnd, WM_CHAR, static_cast<WPARAM>(static_cast<unsigned char>(c)), 1);
 }
 
+// Pastes `text` into the focused text box: the player's clipboard is set to
+// it, Ctrl+V pressed, and the clipboard put back a second later. Typed one
+// character at a time, the game dropped some ("127.0.1" on 0.9.3).
+bool PasteText(const std::string& text) {
+	HWND hwnd = GameWindow();
+	if (!hwnd || !OpenClipboard(hwnd)) return false;
+	std::wstring old;
+	if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+		if (const auto* p = static_cast<const wchar_t*>(GlobalLock(h))) {
+			old = p;
+			GlobalUnlock(h);
+		}
+	}
+	const std::wstring wide(text.begin(), text.end());  // an address: ASCII
+	HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (wide.size() + 1) * sizeof(wchar_t));
+	bool set = false;
+	if (mem) {
+		std::memcpy(GlobalLock(mem), wide.c_str(), (wide.size() + 1) * sizeof(wchar_t));
+		GlobalUnlock(mem);
+		EmptyClipboard();
+		set = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
+		if (!set) GlobalFree(mem);
+	}
+	CloseClipboard();
+	if (!set) return false;
+	INPUT in[4] {};
+	for (auto& i : in) i.type = INPUT_KEYBOARD;
+	in[0].ki.wVk = VK_CONTROL;
+	in[1].ki.wVk = 'V';
+	in[2].ki.wVk = 'V';
+	in[2].ki.dwFlags = KEYEVENTF_KEYUP;
+	in[3].ki.wVk = VK_CONTROL;
+	in[3].ki.dwFlags = KEYEVENTF_KEYUP;
+	SendInput(4, in, sizeof(INPUT));
+	std::thread([hwnd, old] {
+		Sleep(1500);
+		if (!OpenClipboard(hwnd)) return;
+		EmptyClipboard();
+		if (!old.empty()) {
+			if (HGLOBAL m = GlobalAlloc(GMEM_MOVEABLE, (old.size() + 1) * sizeof(wchar_t))) {
+				std::memcpy(GlobalLock(m), old.c_str(), (old.size() + 1) * sizeof(wchar_t));
+				GlobalUnlock(m);
+				if (!SetClipboardData(CF_UNICODETEXT, m)) GlobalFree(m);
+			}
+		}
+		CloseClipboard();
+	}).detach();
+	return true;
+}
+
 // Clears the focused text box and types `text` as keyboard input.
 void TypeText(const std::string& text) {
 	HWND hwnd = GameWindow();
@@ -692,9 +742,19 @@ void LoaderJoinTick() {
 		return;
 	}
 	if (g_join.step == 4) {
-		// Cleared, then one character a frame (JoinTick waits a little between them).
+		// First tries: cleared, then pasted whole. Last try: typed one character
+		// at a time, each checked and typed again when the box did not take it.
 		if (g_join.typed == 0) ClearFocusedText();
+		if (g_join.tries < 2) {
+			Log("join: pasting %s -> %s", g_join.address.c_str(), PasteText(g_join.address) ? "ok" : "no clipboard");
+			g_join.step = 5;
+			OnUi(JoinTick);
+			return;
+		}
+		if (g_join.typed > 0 && box() != g_join.address.substr(0, g_join.typed)) --g_join.typed;
 		if (g_join.typed < g_join.address.size()) {
+			const std::string now = box();
+			if (now.size() > g_join.typed) ClearFocusedText(), g_join.typed = 0;
 			TypeChar(g_join.address[g_join.typed++]);
 			OnUi(JoinTick);
 			return;
@@ -729,7 +789,7 @@ void LoaderJoinTick() {
 void JoinTick() {
 	if (g_join.step == 0) return;
 	// Typing goes a character every few frames; the other steps wait longer.
-	if (++g_join.ticks < (g_join.loader && g_join.step == 4 && g_join.typed > 0 ? 4 : kJoinWait)) {
+	if (++g_join.ticks < (g_join.loader && g_join.step == 4 && g_join.typed > 0 ? 8 : kJoinWait)) {
 		OnUi(JoinTick);
 		return;
 	}
