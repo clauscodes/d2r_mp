@@ -10,6 +10,19 @@ the rooms list opens beside it:
   like D2R's own *Host Game* button. The room stays listed while you play and
   is removed when you leave the game, or with *Close room*.
 
+D2RLoader 1.3.1's **Multiplayer** button opens its own window (*HOST GAME* /
+*BROWSE GAMES*) instead of D2R's TCP/IP screen (0.3). The list then opens at
+the screen's left edge beside that window:
+
+- **Host** with D2RLoader's own *CREATE GAME*: the plugin reads its game name
+  and password and lists the room (through a relay when `mode` says so).
+- **Join** in the list opens D2RLoader's *Direct Join*, types the address
+  (`127.0.0.1` through a relay) and presses Join. If the typing does not reach
+  the box, the status line says what to type.
+
+D2RLoader's own *BROWSE GAMES* list and its *Hosting* / *Public IP* lines stay
+as they are: a plugin cannot add rows or change text there.
+
 Works with any D2RLoader setup — D2R VR Authentic, D2R VR Unleashed or no mod.
 It is a client-only plugin: nothing in game data or saves, not needed by other
 players in the game.

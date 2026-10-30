@@ -179,6 +179,21 @@ void TestLayout() {
 		formShown |= name == "RoomName" || name == "Create";
 	}
 	CHECK(hostingShown && !formShown);
+
+	// Beside D2RLoader's Multiplayer window: its CREATE GAME hosts, so only the
+	// password field is left, and the panel sits at the left edge.
+	view.hosting = false;
+	view.loader = true;
+	layout = json::Parse(PanelLayout(view));
+	CHECK(layout.has_value());
+	bool passwordShown = false, createShown = false;
+	for (size_t i = 0; i < (*layout)["children"].size(); ++i) {
+		const std::string name = (*layout)["children"][i]["name"].asString();
+		passwordShown |= name == "RoomName";
+		createShown |= name == "Create";
+	}
+	CHECK(passwordShown && !createShown);
+	CHECK((*layout)["fields"]["anchor"]["x"].asNumber() == 0);
 }
 
 void TestRelay() {
@@ -221,6 +236,8 @@ void TestRelay() {
 	      HostingVerdict::Unreachable);
 	CHECK(ParseHostingVerdict("mapping failed\nAutomatic router mapping succeeded via UPnP on TCP port 4001.\nTCP port 4001 is reachable from outside\n") ==
 	      HostingVerdict::Reachable);
+	CHECK(ParseHostingVerdict("[HOSTING] x\nHosting verification finished: Verified.\n") == HostingVerdict::Reachable);
+	CHECK(ParseHostingVerdict("Hosting verification finished: Service unavailable.\n") == HostingVerdict::Unknown);
 
 	// /healthz
 	auto h = ParseHealth(200, R"({"ok":true,"relay":1,"name":"Ours","status":"near_limit","open":true,"usage":0.85,"pipes":7})");

@@ -3,6 +3,11 @@
 // OK; Create lists a room and opens D2R's Host Game path. Everything goes
 // through the game's own screens and messages - nothing in a game changes.
 //
+// D2RLoader 1.3.1's Multiplayer button opens its own window instead
+// (D2RLoaderMultiplayerPanel: HOST GAME / BROWSE GAMES). Then the list opens
+// beside that window, its CREATE GAME lists the room (and opens the relay),
+// and Join goes through its Direct Join box.
+//
 // When D2RLoader reports that the host's port cannot be reached from outside,
 // the host's room goes through a relay (relay/PROTOCOL.md): both PCs dial out
 // to it, the joiner's game joins a listener on loopback, and the bytes are
@@ -44,9 +49,9 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.2.0",
+	.version     = "0.3.0",
 	.author      = "D2R Rooms",
-	.description = "Open TCP/IP rooms: list, join and create from the TCP/IP screen.",
+	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
 };
 
@@ -72,12 +77,18 @@ std::string g_status = "Loading the rooms...";
 int g_page = 0;
 std::optional<Hosted> g_hosted;
 
+// D2RLoader's own Multiplayer window and its messages (D2RCore.dll 1.3.1).
+constexpr const char* kLoaderPanel = "D2RLoaderMultiplayerPanel";
+constexpr const char* kLoaderMessage = "D2RLoaderMultiplayerPanelMessage";
+
 // UI thread only.
 bool g_panelOpen = false;
+bool g_loaderUi = false;  // D2RLoader's Multiplayer window is open
 struct JoinFlow {
 	int step = 0;  // 0 = idle
 	int ticks = 0;
 	std::string address;
+	bool loader = false;  // through D2RLoader's Direct Join instead of D2R's Join Game
 } g_join;
 
 std::atomic<int> g_act {0};
@@ -271,6 +282,7 @@ void ApplyLayout() {
 			if (!r.relayUrl.empty()) r.relayState = StateOf(r.relayUrl);
 		view.page = g_page;
 		view.status = g_status + "     " + RelaysLine();
+		view.loader = g_loaderUi;
 		view.hosting = g_hosted.has_value();
 		if (g_hosted && g_hostRelay)
 			view.hostingText = "You host room [" + g_hosted->code + "]. Your port cannot be reached from outside, so friends join through relay " +
@@ -350,7 +362,7 @@ void Refresh() {
 			if (list) {
 				g_rooms = std::move(*list);
 				g_page = std::min(g_page, PageCount(g_rooms.size()) - 1);
-				g_status = g_rooms.empty() ? "No open rooms right now. Create one below."
+				g_status = g_rooms.empty() ? "No open rooms right now."
 				                           : std::to_string(g_rooms.size()) + " open room(s) - page " + std::to_string(g_page + 1) +
 				                                 "/" + std::to_string(PageCount(g_rooms.size()));
 			} else {
@@ -425,6 +437,36 @@ void TypeText(const std::string& text) {
 
 constexpr int kJoinWait = 20;  // UI updates between the steps
 
+void JoinTick();
+
+// D2RLoader's Direct Join: open the box, type the address, press Join. Its
+// game_port is the joiner's own, so the address has no port either.
+void LoaderJoinTick() {
+	const auto box = [] { return ReadInput(kLoaderPanel, {"DirectJoinAddressInput"}); };
+	if (g_join.step == 1) {
+		Dispatch(kLoaderMessage, "OpenDirectJoin");
+		g_join.step = 2;
+		OnUi(JoinTick);
+		return;
+	}
+	if (g_join.step == 2) {
+		Log("join: direct join box had '%s'", box().c_str());
+		TypeText(g_join.address);
+		g_join.step = 3;
+		OnUi(JoinTick);
+		return;
+	}
+	const std::string typed = box();
+	Log("join: direct join box has '%s', want '%s'", typed.c_str(), g_join.address.c_str());
+	if (typed == g_join.address) {
+		Dispatch(kLoaderMessage, "JoinDirect", g_join.address.c_str());
+	} else {
+		SetStatus("Type " + g_join.address + " into Direct Join and press Join.");
+		ShowPanel(true);
+	}
+	g_join = {};
+}
+
 void JoinTick() {
 	if (g_join.step == 0) return;
 	if (++g_join.ticks < kJoinWait) {
@@ -432,6 +474,10 @@ void JoinTick() {
 		return;
 	}
 	g_join.ticks = 0;
+	if (g_join.loader) {
+		LoaderJoinTick();
+		return;
+	}
 	if (g_join.step == 1) {
 		Log("join: box had '%s'", ReadInput("JoinGameModal", {"JoinGameInputScreen", "InputText"}).c_str());
 		TypeText(g_join.address);
@@ -451,12 +497,13 @@ void JoinTick() {
 
 void StartJoin(const JoinAnswer& answer) {
 	// D2R's TCP/IP join takes an address without a port; the board lists port 4000.
-	g_join = {.step = 1, .ticks = 0, .address = answer.address};
+	g_join = {.step = 1, .ticks = 0, .address = answer.address, .loader = g_loaderUi};
 	const bool relayed = answer.relay && answer.address.rfind("127.", 0) == 0;
 	SetStatus((relayed ? "Joining through the relay (" + answer.address + ")" : "Joining " + answer.address) +
 	          (answer.modMismatch ? " (the host plays another mod)" : ""));
+	// Closed so that the typing goes to the join box, not to this panel's field.
 	ShowPanel(false);
-	Dispatch("FrontEndNavigation", "ToJoinGame");
+	if (!g_join.loader) Dispatch("FrontEndNavigation", "ToJoinGame");
 	OnUi(JoinTick);
 }
 
@@ -690,15 +737,15 @@ void StopHosting(bool removeFromBoard) {
 	OnUi(ApplyLayout);
 }
 
-void Create() {
-	if (Hosting()) return;
-	std::string name = ReadInput(kPanelName, {"RoomName"});
+// Lists the room. `loader`: D2RLoader's CREATE GAME was pressed and goes on to
+// host by itself; otherwise this goes on like D2R's own Host Game button.
+void CreateRoom(std::string name, const std::string& password, bool loader) {
 	if (name.empty()) name = "D2R game";
-	Log("host: creating '%s'", name.c_str());
+	Log("host: creating '%s'%s%s", name.c_str(), password.empty() ? "" : " with a password", loader ? " from D2RLoader's CREATE GAME" : "");
 	// D2RLoader's verdict on the port comes after this point in its log.
 	size_t logStart = 0;
 	ReadText(LoaderLog(), ~size_t(0), &logStart);
-	Send(D2RL::Http::Method::Post, "/api/rooms", CreateBody(name, g_mod, {}, g_act), {}, [logStart](int status, const std::string& body) {
+	Send(D2RL::Http::Method::Post, "/api/rooms", CreateBody(name, g_mod, password, g_act), {}, [logStart, loader](int status, const std::string& body) {
 		auto hosted = status == 200 ? ParseCreate(body) : std::nullopt;
 		if (!hosted) {
 			SetStatus(Explain(status, body));
@@ -714,6 +761,10 @@ void Create() {
 		StopHeartbeat();
 		g_heartbeat = std::thread(HeartbeatLoop, *hosted);
 		std::thread(WatchHosting, ++g_hostSession, logStart).detach();
+		if (loader) {
+			OnUi(ApplyLayout);
+			return;
+		}
 		// Same message as D2R's own Host Game button on the TCP/IP screen.
 		OnUi([] {
 			ShowPanel(false);
@@ -722,7 +773,43 @@ void Create() {
 	});
 }
 
+void Create() {
+	if (Hosting()) return;
+	CreateRoom(ReadInput(kPanelName, {"RoomName"}), {}, false);
+}
+
+// D2RLoader's CREATE GAME: the same room, named as its game. A room still
+// listed from an earlier try is replaced. UI thread, before D2RLoader acts.
+void CreateFromLoader() {
+	const std::string name = ReadInput(kLoaderPanel, {"HostGameNameInput"});
+	const std::string password = ReadInput(kLoaderPanel, {"HostPasswordInput"});
+	if (Hosting()) StopHosting(true);
+	CreateRoom(name, password, true);
+}
+
 // --- D2R messages -------------------------------------------------------
+
+// Where D2RLoader's Multiplayer window and the fields this plugin uses are,
+// for placing the list beside it in a later version. UI thread.
+void LogLoaderPanel() {
+	D2RL::Widgets::WidgetHandle panel = D2RL::Widgets::InvalidHandle;
+	if (g_widgets->findPanel(g_ctx, kLoaderPanel, &panel) != D2RL::Widgets::Result::Success) {
+		Log("loader: %s not found", kLoaderPanel);
+		return;
+	}
+	const auto logRect = [](const char* name, D2RL::Widgets::WidgetHandle h) {
+		D2RL::Widgets::Rect r {};
+		const auto got = g_widgets->getWidgetRect(g_ctx, h, &r);
+		Log("loader: %s rect %d,%d %dx%d (%u)", name, r.x, r.y, r.width, r.height, static_cast<unsigned>(got));
+	};
+	logRect(kLoaderPanel, panel);
+	for (const char* name : {"HostGameNameInput", "HostPasswordInput", "DirectJoinAddressInput", "DirectJoinPasswordInput"}) {
+		D2RL::Widgets::WidgetHandle h = D2RL::Widgets::InvalidHandle;
+		const auto found = g_widgets->findWidget(g_ctx, panel, name, &h);
+		if (found == D2RL::Widgets::Result::Success) logRect(name, h);
+		else Log("loader: %s not found (%u)", name, static_cast<unsigned>(found));
+	}
+}
 
 void HandleOwn(const std::string& command, const std::string& text) {
 	if (command == "Close") {
@@ -760,6 +847,27 @@ D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContex
 		} catch (...) {
 		}
 		return D2RL::SharedEvents::UiMessageAction::Consume;
+	}
+	if (target == "PanelManager" && text == kLoaderPanel) {
+		if (command == "OpenPanel" || command == "OpenExclusivePanel") {
+			OnUi([] {
+				g_loaderUi = true;
+				LogLoaderPanel();
+				ShowPanel(true);
+			});
+			Refresh();
+		} else if (command == "ClosePanel" || command == "UnloadPanel") {
+			OnUi([] {
+				g_loaderUi = false;
+				ShowPanel(false);
+			});
+		}
+	} else if (target == kLoaderMessage && command == "CreateGame") {
+		// Read its fields now, before D2RLoader moves on; it hosts by itself.
+		try {
+			CreateFromLoader();
+		} catch (...) {
+		}
 	}
 	if (target == "FrontEndNavigation") {
 		if (command == "ToTCPIP") {

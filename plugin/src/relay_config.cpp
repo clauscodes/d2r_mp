@@ -128,12 +128,13 @@ int ParseGamePort(std::string_view toml) {
 	return port;
 }
 
-// The strings are D2RLoader 1.3.1's (D2RCore.dll); see the plan's §1.
+// The strings are D2RLoader 1.3.1's (D2RCore.dll; "Verified" is 1.3.1-beta's); see the plan's §1.
 HostingVerdict ParseHostingVerdict(std::string_view text) {
 	HostingVerdict v = HostingVerdict::Unknown;
 	ForEachLine(text, [&](std::string_view line) {
 		if (line.find("is reachable from outside") != std::string_view::npos ||
 		    line.find("Hosting verification finished: Reachable") != std::string_view::npos ||
+		    line.find("Hosting verification finished: Verified") != std::string_view::npos ||
 		    line.find("The active local address is already public") != std::string_view::npos) {
 			v = HostingVerdict::Reachable;
 		} else if (line.find("Hosting verification finished: Unreachable") != std::string_view::npos ||

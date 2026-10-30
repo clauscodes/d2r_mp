@@ -11,6 +11,8 @@ namespace {
 // Same frame as the TCP/IP panel, placed to its left: both are anchored at
 // (0.5, 0.1) and the TCP/IP panel spans x -581..581.
 constexpr int kPanelX = -1763;
+// Beside D2RLoader's Multiplayer window: anchored at the screen's left edge.
+constexpr int kLoaderPanelX = 40;
 constexpr int kPanelWidth = 1162;
 constexpr int kPanelHeight = 1507;
 constexpr int kRowTop = 330;
@@ -83,6 +85,16 @@ std::string PanelLayout(const PanelView& view) {
 	if (view.hosting) {
 		children.push_back(Text("Hosting", Rect(90, 1230, 760, 120), view.hostingText, Style("$SmallFontSize", "left", true)));
 		children.push_back(Button("CloseRoom", 870, 1250, "Close room", "CloseRoom"));
+	} else if (view.loader) {
+		children.push_back(Text("HostHint", Rect(90, 1150, 982, 50), "To host: CREATE GAME in D2RLoader's window lists your game here.",
+		                        Style("$SmallFontSize", "left", false)));
+		children.push_back(Text("NameLabel", Rect(90, 1200, 760, 50), "Password of a locked room", Style("$SmallFontSize", "left", false)));
+		children.push_back("{\"type\":\"ImageWidget\",\"name\":\"NameBackground\",\"fields\":{\"rect\":" + Rect(60, 1240) +
+			",\"filename\":\"PANEL\\\\TCP_IP\\\\TCP_IP_TextEntry\"}}");
+		children.push_back(
+			"{\"type\":\"InputTextBoxWidget\",\"name\":\"RoomName\",\"fields\":{\"rect\":" + Rect(100, 1275, 520, 60) +
+			",\"backgroundColor\":{\"r\":0,\"g\":0,\"b\":0,\"a\":0},\"fontStyle\":{\"alignment\":{\"h\":\"center\",\"v\":\"top\"},"
+			"\"pointSize\":\"$MediumFontSize\",\"fontColor\":\"$FontColorLightGold\"},\"fontType\":\"16pt\"}}");
 	} else {
 		children.push_back(Text("NameLabel", Rect(90, 1200, 760, 50), "Room name (or the password of a locked room)", Style("$SmallFontSize", "left", false)));
 		children.push_back("{\"type\":\"ImageWidget\",\"name\":\"NameBackground\",\"fields\":{\"rect\":" + Rect(60, 1240) +
@@ -100,7 +112,8 @@ std::string PanelLayout(const PanelView& view) {
 	if (page + 1 < pages) children.push_back(Button("Next", 870, y, "More", "Next"));
 
 	std::string out = "{\"type\":\"Panel\",\"name\":\"" + std::string(kPanelName) +
-		"\",\"fields\":{\"anchor\":{\"x\":0.5,\"y\":0.1},\"rect\":{\"x\":" + std::to_string(kPanelX) +
+		"\",\"fields\":{\"anchor\":{\"x\":" + (view.loader ? "0" : "0.5") + ",\"y\":0.1},\"rect\":{\"x\":" +
+		std::to_string(view.loader ? kLoaderPanelX : kPanelX) +
 		",\"width\":" + std::to_string(kPanelWidth) + ",\"height\":" + std::to_string(kPanelHeight) +
 		"},\"priority\":8500},\"children\":[";
 	for (size_t i = 0; i < children.size(); ++i) {

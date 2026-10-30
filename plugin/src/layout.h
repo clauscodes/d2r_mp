@@ -25,6 +25,9 @@ struct PanelView {
 	std::string status;       // one line under the title
 	bool hosting = false;
 	std::string hostingText;  // shown instead of the create form while hosting
+	// D2RLoader's own Multiplayer window is open: its CREATE GAME hosts, so the
+	// panel has no create form and sits at the screen's left edge beside it.
+	bool loader = false;
 };
 
 int PageCount(size_t roomCount);
