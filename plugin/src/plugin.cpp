@@ -50,7 +50,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.8.2",
+	.version     = "0.9.0",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -98,6 +98,11 @@ bool g_tabActive = false;      // the D2R Rooms window is open in place of D2RLo
 std::optional<Room> g_lockedJoin;
 std::atomic<bool> g_resendJoinDirect {false};  // the join then presses Direct Join's Join again
 std::chrono::steady_clock::time_point g_resendUntil;  // that press is not taken over again
+// The address a Direct Join the plugin started must carry (127.0.0.1 through a
+// relay): its Join does not go out with another one (on 0.8.1 D2RLoader's
+// remembered address stayed in the box and the game went there).
+std::string g_joinAddress;
+int g_noticeSlot = -1;  // the pool panel showing a notice at the top, or -1
 struct JoinFlow {
 	int step = 0;  // 0 = idle
 	int ticks = 0;
@@ -428,9 +433,12 @@ void EnterTab() {
 
 // D2RLoader's window closed (or D2R left the front-end): its tab button with it,
 // and the D2R Rooms window unless it is replacing that window.
+void HideNotice();
+
 void CloseLoaderUi() {
 	g_loaderUi = false;
 	ShowTabButton(false);
+	HideNotice();
 	if (std::chrono::steady_clock::now() < g_swapUntil) return;
 	g_tabActive = false;
 	ShowPanel(false);
@@ -540,6 +548,79 @@ HWND GameWindow() {
 	return hwnd;
 }
 
+// Clicks one of D2RLoader's widgets as the player would: its text boxes take
+// the keyboard only after a click (typing into the open Direct Join box went
+// nowhere on 0.8.1). Its rect is in that window's units from the screen's top
+// middle, the child's relative to `container`. The cursor goes back after.
+bool ClickLoaderWidget(const char* container, const char* name) {
+	D2RL::Widgets::WidgetHandle panel = D2RL::Widgets::InvalidHandle, c = D2RL::Widgets::InvalidHandle, w = D2RL::Widgets::InvalidHandle;
+	D2RL::Widgets::Rect rc {}, rw {};
+	if (g_widgets->findPanel(g_ctx, kLoaderPanel, &panel) != D2RL::Widgets::Result::Success ||
+	    g_widgets->findWidget(g_ctx, panel, container, &c) != D2RL::Widgets::Result::Success ||
+	    g_widgets->getWidgetRect(g_ctx, c, &rc) != D2RL::Widgets::Result::Success ||
+	    g_widgets->findWidget(g_ctx, panel, name, &w) != D2RL::Widgets::Result::Success ||
+	    g_widgets->getWidgetRect(g_ctx, w, &rw) != D2RL::Widgets::Result::Success) {
+		Log("click: %s/%s not found", container, name);
+		return false;
+	}
+	HWND hwnd = GameWindow();
+	RECT client {};
+	if (!hwnd || !GetClientRect(hwnd, &client) || client.right <= 0 || client.bottom <= 0) return false;
+	const double scale = std::min(client.right / 3840.0, client.bottom / 2160.0);
+	const int x = rc.x + rw.x + rw.width / 2, y = rc.y + rw.y + rw.height / 2;
+	POINT p {static_cast<LONG>(client.right / 2.0 + x * scale), static_cast<LONG>(y * scale)};
+	Log("click: %s %d,%d %dx%d in %s %d,%d -> %d,%d px", name, rw.x, rw.y, rw.width, rw.height, container, rc.x, rc.y, p.x, p.y);
+	ClientToScreen(hwnd, &p);
+	POINT old {};
+	GetCursorPos(&old);
+	SetCursorPos(p.x, p.y);
+	INPUT in[2] {};
+	in[0].type = in[1].type = INPUT_MOUSE;
+	in[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+	in[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+	SendInput(2, in, sizeof(INPUT));
+	std::thread([old] {
+		Sleep(300);
+		SetCursorPos(old.x, old.y);
+	}).detach();
+	return true;
+}
+
+// A line at the top of the screen, over D2RLoader's window, in a pool panel.
+void HideNotice() {
+	if (g_noticeSlot < 0) return;
+	g_panels->closePanel(g_ctx, g_pool[g_noticeSlot]);
+	g_noticeSlot = -1;
+}
+
+void ShowNotice(const std::string& text) {
+	HideNotice();
+	if (g_poolSize == 0) return;
+	const int slot = g_nextSlot++ % g_poolSize;
+	if (slot == g_slot) return;
+	const std::string layout = "{\"type\":\"Panel\",\"name\":" + json::Quote(PanelName(slot)) +
+		",\"fields\":{\"anchor\":{\"x\":0.5,\"y\":0},\"rect\":{\"x\":-1200,\"y\":30,\"width\":2400,\"height\":100},\"priority\":2100000001},"
+		"\"children\":[{\"type\":\"TextBoxWidget\",\"name\":\"Notice\",\"fields\":{\"rect\":{\"x\":0,\"y\":0,\"width\":2400,\"height\":100},"
+		"\"text\":" + json::Quote(FieldText(text)) + ",\"style\":{\"fontColor\":\"$FontColorLightGold\",\"pointSize\":\"$LargeFontSize\","
+		"\"alignment\":{\"h\":\"center\",\"v\":\"center\"}}}}]}";
+	if (g_poolLayout[slot] != D2RL::Resources::InvalidHandle) g_resources->unregisterResource(g_ctx, g_poolLayout[slot]);
+	g_poolLayout[slot] = D2RL::Resources::InvalidHandle;
+	const std::string path = PanelPath(slot);
+	const D2RL::Resources::ResourceRegistration resource {
+		.structSize = D2RL::Resources::ResourceRegistrationSize,
+		.flags      = 0,
+		.path       = path.c_str(),
+		.bytes      = layout.data(),
+		.byteCount  = layout.size(),
+	};
+	g_resources->registerResource(g_ctx, &resource, &g_poolLayout[slot]);
+	g_noticeSlot = slot;
+	OnUi([slot] {
+		if (g_noticeSlot == slot) g_panels->openPanel(g_ctx, g_pool[slot]);
+	});
+	Log("notice: %s", text.c_str());
+}
+
 // Clears the focused text box and types `text` as keyboard input.
 void TypeText(const std::string& text) {
 	HWND hwnd = GameWindow();
@@ -564,6 +645,7 @@ void LoaderJoinTick() {
 	const auto box = [] { return ReadInput(kLoaderPanel, {"DirectJoinAddressInput"}); };
 	if (g_join.step == 1) {
 		// From the D2R Rooms window: D2RLoader's window comes back first.
+		g_joinAddress = g_join.address;
 		if (!g_loaderUi) Dispatch("PanelManager", "OpenPanel", kLoaderPanel);
 		g_join.step = 2;
 		OnUi(JoinTick);
@@ -578,21 +660,29 @@ void LoaderJoinTick() {
 	}
 	if (g_join.step == 3) {
 		Log("join: direct join box had '%s'", box().c_str());
-		if (!g_join.address.empty()) TypeText(g_join.address);
+		if (!g_join.address.empty()) ClickLoaderWidget("DirectJoinContainer", "DirectJoinAddressInput");
 		g_join.step = 4;
+		OnUi(JoinTick);
+		return;
+	}
+	if (g_join.step == 4) {
+		if (!g_join.address.empty()) TypeText(g_join.address);
+		g_join.step = 5;
 		OnUi(JoinTick);
 		return;
 	}
 	const std::string typed = box();
 	Log("join: direct join box has '%s', want '%s'", typed.c_str(), g_join.address.c_str());
-	if (!g_join.press) {
-		Log("join: the player types the room's password into Direct Join and presses Join");
-	} else if (typed == g_join.address) {
-		Dispatch(kLoaderMessage, "JoinDirect", g_join.address.c_str());
+	if (!g_join.address.empty() && typed != g_join.address) {
+		// The box kept another address: the player types it; Join waits for it.
+		ShowNotice("D2R Rooms: type " + g_join.address + " into Direct Join's address box" +
+		           (g_join.press ? ", then press Join." : ", the room's password below it, then press Join."));
+	} else if (!g_join.press) {
+		ShowNotice("D2R Rooms: type the room's password into Direct Join, then press Join.");
 	} else {
-		// Direct Join is open in D2RLoader's window: the player finishes it.
-		SetStatus("Type " + g_join.address + " into Direct Join and press Join.");
-		Log("join: type %s into Direct Join by hand", g_join.address.c_str());
+		HideNotice();
+		g_resendUntil = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+		Dispatch(kLoaderMessage, "JoinDirect", g_join.address.c_str());
 	}
 	g_join = {};
 }
@@ -629,6 +719,13 @@ void JoinTick() {
 // D2RLoader now: the relay is up (or the board or relay refused, and
 // D2RLoader's own "unable to join" says so).
 void ResendJoinDirect() {
+	const std::string box = ReadInput(kLoaderPanel, {"DirectJoinAddressInput"});
+	if (!g_joinAddress.empty() && box != g_joinAddress) {
+		Log("join: Direct Join has '%s', not %s; it waits", box.c_str(), g_joinAddress.c_str());
+		ShowNotice("D2R Rooms: type " + g_joinAddress + " into Direct Join's address box, then press Join.");
+		return;
+	}
+	HideNotice();
 	g_resendUntil = std::chrono::steady_clock::now() + std::chrono::seconds(1);
 	Dispatch(kLoaderMessage, "JoinDirect");
 }
@@ -1115,6 +1212,20 @@ D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContex
 			CreateFromLoader();
 		} catch (...) {
 		}
+	}
+	if (target == kLoaderMessage && command == "JoinDirect" && !g_joinAddress.empty() && std::chrono::steady_clock::now() >= g_resendUntil) {
+		// A join the plugin started: it goes out only to its own address.
+		const std::string box = ReadInput(kLoaderPanel, {"DirectJoinAddressInput"});
+		if (box != g_joinAddress) {
+			Log("join: Direct Join pressed with '%s', not %s: held", box.c_str(), g_joinAddress.c_str());
+			OnUi([] { ShowNotice("D2R Rooms: type " + g_joinAddress + " into Direct Join's address box, then press Join."); });
+			return D2RL::SharedEvents::UiMessageAction::Consume;
+		}
+		Log("join: Direct Join pressed with %s", box.c_str());
+		g_joinAddress.clear();
+		OnUi(HideNotice);
+	} else if (target == kLoaderMessage && command == "JoinDirect" && std::chrono::steady_clock::now() < g_resendUntil) {
+		g_joinAddress.clear();
 	}
 	if (target == "FrontEndNavigation") {
 		if (command == "ToTCPIP") {

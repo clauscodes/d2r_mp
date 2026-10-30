@@ -132,7 +132,7 @@ void TestLayout() {
 		const std::string name = kids[i]["name"].asString();
 		if (name.rfind("Join", 0) == 0) {
 			++joins;
-			CHECK(kids[i]["fields"]["onClickMessage"].asString() == std::string(kMessageTarget) + ":Join:" + name.substr(4));
+			CHECK(!kids[i]["fields"].has("onClickMessage"));  // D2RLoader asserts on an unknown target
 		}
 		if (name == "Next") next = true;
 		if (name == "Prev") prev = true;

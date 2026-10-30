@@ -49,14 +49,17 @@ std::string Text(const std::string& name, const std::string& rect, std::string_v
 		",\"text\":" + json::Quote(FieldText(text)) + ",\"style\":" + style + "}}";
 }
 
+// No onClickMessage: in the front-end a plugin panel gets no clicks (the
+// plugin matches them itself), and D2RLoader asserts on a message target it
+// has no registration for ("Missing message value list registration for
+// D2RRooms"). `command` and `argument` name the button for HitArea.
 std::string Button(const std::string& name, int x, int y, std::string_view label, const std::string& command,
                    const std::string& argument = {}) {
-	std::string message = std::string(kMessageTarget) + ":" + command;
-	if (!argument.empty()) message += ":" + argument;
+	(void)command;
+	(void)argument;
 	return "{\"type\":\"ButtonWidget\",\"name\":" + json::Quote(name) + ",\"fields\":{\"rect\":" + Rect(x, y) +
 		",\"filename\":\"FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall\",\"textString\":" + json::Quote(FieldText(label)) +
-		",\"text/style\":\"$StyleFEButtonText\",\"textColor\":\"$LightButtonTextColor\",\"pressedFrame\":1,\"hoveredFrame\":3"
-		",\"onClickMessage\":" + json::Quote(message) + "}}";
+		",\"text/style\":\"$StyleFEButtonText\",\"textColor\":\"$LightButtonTextColor\",\"pressedFrame\":1,\"hoveredFrame\":3}}";
 }
 
 std::string PasswordField(int x, int y) {
@@ -139,7 +142,7 @@ std::string WindowLayout(const PanelView& view, int pages, int page) {
 		"\",\"fields\":{\"rect\":\"$InGamePanelTitleRect\",\"text\":\"D2R Rooms\",\"style\":\"$StyleTitleBlock\"}}");
 	children.push_back(
 		"{\"type\":\"ButtonWidget\",\"name\":\"Close\",\"fields\":{\"rect\":" + Rect(kCloseX, kCloseY) + ",\"filename\":\"PANEL\\\\closebtn_4x\","
-		"\"hoveredFrame\":3,\"onClickMessage\":\"" + std::string(kMessageTarget) + ":Close\"}}");
+		"\"hoveredFrame\":3}}");
 	if (!view.status.empty())
 		children.push_back(Text("Status", Rect(kTextX, 240, 982, 60), view.status, Style("$SmallFontSize", "center", false)));
 
@@ -199,7 +202,7 @@ std::string PanelLayout(const PanelView& view) {
 		"\",\"fields\":{\"rect\":\"$InGamePanelTitleRect\",\"text\":\"D2R Rooms\",\"style\":\"$StyleTitleBlock\"}}");
 	children.push_back(
 		"{\"type\":\"ButtonWidget\",\"name\":\"Close\",\"fields\":{\"rect\":{\"x\":1075,\"y\":9},\"filename\":\"PANEL\\\\closebtn_4x\","
-		"\"hoveredFrame\":3,\"onClickMessage\":\"" + std::string(kMessageTarget) + ":Close\"}}");
+		"\"hoveredFrame\":3}}");
 	if (!view.status.empty()) children.push_back(Text("Status", Rect(90, 240, 982, 60), view.status, Style("$SmallFontSize", "center", false)));
 	Rows(view, page, 90, kRowTop, 760, buttonX, children);
 
