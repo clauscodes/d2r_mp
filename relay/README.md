@@ -23,10 +23,9 @@ npx wrangler dev                                       # then, in another termin
 python ../conformance.py ws://127.0.0.1:8787
 ```
 
-Under `wrangler dev`, two conformance checks (`pipes_and_close` and `keys`) time out. They wait for a close that the
-relay starts itself, and the local dev proxy does not pass that close to the Python client. The vitest tests check those
-closes inside the runtime, and the plugin's `relay_e2e.exe` sees them through `wrangler dev`. Against a deployed relay,
-all 8 checks must pass.
+All 8 checks must pass, under `wrangler dev` and against a deployed relay. When the relay closes a socket, Cloudflare
+drops the TCP connection only seconds after the close frame, so `conformance.py` takes the close frame itself as the
+close (`websockets` would wait for the TCP close).
 
 The plugin's own client, end to end with a fake game:
 
@@ -45,7 +44,9 @@ plugin/build/Release/relay_e2e.exe ws://127.0.0.1:8787 --bench 30 25 120   # sec
 On one PC (2026-10-30, 2 joiners × 25 packets/s × 120 B): Python relay round trip 0.4 ms median, 0.5 ms at the 95th
 percentile; `wrangler dev` 3.8 ms median, 5.9 ms at the 95th percentile, 13 ms worst; nothing lost; a burst of
 6.4 MB/s each way through `wrangler dev`. Each joiner was 3.0 KB/s and 25 messages/s each way, and the host 50
-messages/s up. What a real D2R game sends is still to be measured: the plugin logs it (plugin/README.md).
+messages/s up. Against the deployed relay from a home PC (2026-10-30, 15 s): 71 ms median, 77 ms at the 95th
+percentile, nothing lost, a burst of 3.0 MB/s. What a real D2R game sends is still to be measured: the plugin logs it
+(plugin/README.md).
 
 ## Deploy
 

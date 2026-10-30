@@ -106,9 +106,23 @@ async def data(ws: ClientConnection) -> bytes:
 
 
 async def closed(ws: ClientConnection) -> tuple[Optional[int], str]:
+    # The relay's close frame is what counts. After it the client waits for the
+    # server to drop TCP, which Cloudflare's edge does only seconds later, so a
+    # received close frame ends the wait here.
+    deadline = asyncio.get_running_loop().time() + TIMEOUT
     try:
         while True:
-            await recv(ws)
+            rcvd = ws.protocol.close_rcvd
+            if rcvd is not None:
+                ws.transport.abort()
+                return rcvd.code, rcvd.reason
+            left = deadline - asyncio.get_running_loop().time()
+            if left <= 0:
+                raise asyncio.TimeoutError()
+            try:
+                await asyncio.wait_for(ws.recv(), min(0.1, left))
+            except asyncio.TimeoutError:
+                pass
     except ConnectionClosed as e:
         return (e.rcvd.code if e.rcvd else None), (e.rcvd.reason if e.rcvd else "")
 
