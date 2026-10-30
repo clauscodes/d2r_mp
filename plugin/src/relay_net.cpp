@@ -324,6 +324,7 @@ struct HostRelay::Pipe {
 	uintptr_t socket = static_cast<uintptr_t>(INVALID_SOCKET);
 	std::mutex mu;
 	std::string pending;  // bytes from the joiner before the game connection is up
+	bool started = false;  // its game connection is being made (on the pipe's first DATA)
 	bool connected = false;
 	bool closed = false;
 };
@@ -480,8 +481,11 @@ void HostRelay::ReadLoop() {
 				std::lock_guard lock(mu_);
 				pipes_.push_back(pipe);
 			}
+			// The game connection waits for the pipe's first DATA: the joiner's
+			// client sends an empty one when its game connects. Connected at
+			// OPEN, D2R's host dropped it after 15 s while the joiner was still
+			// typing the address.
 			Log(opt_.log, "relay host: joiner on pipe " + std::to_string(n));
-			threads_.emplace_back([this, pipe] { PipeThread(pipe); });
 		} else if (type == kFrameData) {
 			std::shared_ptr<Pipe> pipe;
 			{
@@ -495,6 +499,11 @@ void HostRelay::ReadLoop() {
 			if (pipe->closed) continue;
 			if (pipe->connected) SendAll(static_cast<SOCKET>(pipe->socket), msg.data() + 2, msg.size() - 2);
 			else pipe->pending.append(msg, 2);
+			if (!pipe->started) {
+				pipe->started = true;
+				Log(opt_.log, "relay host: the joiner's game is there; connecting pipe " + std::to_string(n) + " to the game");
+				threads_.emplace_back([this, pipe] { PipeThread(pipe); });
+			}
 		} else if (type == kFrameClose) {
 			ClosePipe(n, false);
 		}
@@ -586,6 +595,9 @@ void JoinRelay::Run() {
 		game_ = static_cast<uintptr_t>(game);
 		connected_ = true;
 		Log(opt_.log, "relay join: the game connected");
+		// An empty message tells the host's client to connect to its game now.
+		const bool marked = ws_->Send(nullptr, 0, false);  // WinHTTP takes no buffer for 0 bytes
+		Log(opt_.log, std::string("relay join: told the host its game is there -> ") + (marked ? "sent" : "FAILED"));
 		// 2. Game -> relay on its own thread; relay -> game here.
 		std::thread up([this, game] {
 			char buf[16 * 1024];

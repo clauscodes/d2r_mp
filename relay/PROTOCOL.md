@@ -99,6 +99,10 @@ byte 2..   payload
 
 - The relay sends OPEN for a pipe before any DATA of it. A joiner may send bytes before the host's client has
   connected to its game: the host's client buffers them until the connection is up.
+- Clients (not relays): the join client sends an empty binary message when its game connects to its listener, and
+  the host's client connects to its game on a pipe's first DATA, not on OPEN. D2R's host speaks first and drops a
+  connection that stays silent, while a joiner may take a while to type the address. A relay forwards an empty
+  message like any other (DATA with no payload).
 - DATA or CLOSE for a pipe that is not open is ignored (it may have just closed).
 - Payload at most `max_message` bytes (65 536). A larger message closes the socket with code 1009.
 

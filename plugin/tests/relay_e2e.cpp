@@ -306,6 +306,60 @@ int main(int argc, char** argv) {
 
 	host.Stop();
 	Check(WaitFor([&] { return ended >= 2; }, 8000), "the host leaving ends joiner 2");
+
+	// D2R's host speaks first and drops a connection that stays silent; the
+	// joiner's game connects only once the player has typed the address. The
+	// host's client must connect to its game when the joiner's game is there,
+	// not when the pipe opens (0.9.1: dropped after 15 s, before the join).
+	{
+		const int port = FreePort();
+		SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		sockaddr_in a {};
+		a.sin_family = AF_INET;
+		a.sin_port = htons(static_cast<u_short>(port));
+		inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+		bind(listener, reinterpret_cast<sockaddr*>(&a), sizeof(a));
+		listen(listener, 4);
+		std::atomic<bool> stopGame {false};
+		std::thread game([&] {  // greets, then drops the client after 1 s of silence
+			for (;;) {
+				SOCKET c = accept(listener, nullptr, nullptr);
+				if (c == INVALID_SOCKET || stopGame) return;
+				send(c, "HI", 2, 0);
+				DWORD timeout = 1000;
+				setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+				char buf[256];
+				for (;;) {
+					const int n = recv(c, buf, sizeof(buf), 0);
+					if (n <= 0 || send(c, buf, n, 0) != n) break;
+				}
+				closesocket(c);
+			}
+		});
+		net::HostRelay host2({.relay = {"test", url, ""}, .gamePort = port, .log = log, .lost = nullptr});
+		Check(host2.Start(&error), "a host whose game speaks first claims a room");
+		const int joinPort = FreePort();
+		net::JoinRelay late({.relay = host2.Ref(), .gamePort = joinPort, .acceptTimeoutMs = 10000, .log = log, .ended = nullptr});
+		std::string lateAddress;
+		Check(late.Start(&lateAddress, &error), "its joiner opens a pipe");
+		Sleep(2500);  // the player types the address: longer than the host game waits
+		SOCKET g = Dial(lateAddress, joinPort);
+		char hello[2] {};
+		int got = 0;
+		while (g != INVALID_SOCKET && got < 2) {
+			const int n = recv(g, hello + got, 2 - got, 0);
+			if (n <= 0) break;
+			got += n;
+		}
+		Check(got == 2 && hello[0] == 'H' && hello[1] == 'I', "a game joining late still gets the host's greeting");
+		Check(g != INVALID_SOCKET && RoundTrip(g, "late but here"), "and plays");
+		if (g != INVALID_SOCKET) closesocket(g);
+		late.Stop();
+		host2.Stop();
+		stopGame = true;
+		closesocket(listener);
+		game.join();
+	}
 	closesocket(g2);
 	j1.Stop();
 	j2.Stop();

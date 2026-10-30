@@ -50,7 +50,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.9.1",
+	.version     = "0.9.2",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -109,6 +109,8 @@ struct JoinFlow {
 	std::string address;
 	bool loader = false;  // through D2RLoader's Direct Join instead of D2R's Join Game
 	bool press = true;    // press its Join (a locked room: the player does, after the password)
+	size_t typed = 0;     // characters of `address` typed so far, one a frame
+	int tries = 0;        // clicks into the box so far
 } g_join;
 
 std::atomic<int> g_act {0};
@@ -629,6 +631,22 @@ void ShowNotice(const std::string& text) {
 	Log("notice: %s", text.c_str());
 }
 
+// Clears the focused text box (48 backspaces), as keyboard input.
+void ClearFocusedText() {
+	HWND hwnd = GameWindow();
+	if (!hwnd) return;
+	for (int i = 0; i < 48; ++i) {
+		PostMessageW(hwnd, WM_KEYDOWN, VK_BACK, 0x000E0001);
+		PostMessageW(hwnd, WM_KEYUP, VK_BACK, 0xC00E0001);
+	}
+}
+
+// One character into the focused text box. The game takes one a frame: a
+// burst of them left only the first in Direct Join's box on 0.9.1.
+void TypeChar(char c) {
+	if (HWND hwnd = GameWindow()) PostMessageW(hwnd, WM_CHAR, static_cast<WPARAM>(static_cast<unsigned char>(c)), 1);
+}
+
 // Clears the focused text box and types `text` as keyboard input.
 void TypeText(const std::string& text) {
 	HWND hwnd = GameWindow();
@@ -674,12 +692,25 @@ void LoaderJoinTick() {
 		return;
 	}
 	if (g_join.step == 4) {
-		if (!g_join.address.empty()) TypeText(g_join.address);
+		// Cleared, then one character a frame (JoinTick waits a little between them).
+		if (g_join.typed == 0) ClearFocusedText();
+		if (g_join.typed < g_join.address.size()) {
+			TypeChar(g_join.address[g_join.typed++]);
+			OnUi(JoinTick);
+			return;
+		}
 		g_join.step = 5;
 		OnUi(JoinTick);
 		return;
 	}
 	const std::string typed = box();
+	if (!g_join.address.empty() && typed != g_join.address && ++g_join.tries < 3) {
+		Log("join: direct join box has '%s', want '%s': again", typed.c_str(), g_join.address.c_str());
+		g_join.step = 3;
+		g_join.typed = 0;
+		OnUi(JoinTick);
+		return;
+	}
 	Log("join: direct join box has '%s', want '%s'", typed.c_str(), g_join.address.c_str());
 	if (!g_join.address.empty() && typed != g_join.address) {
 		// The box kept another address: the player types it; Join waits for it.
@@ -697,7 +728,8 @@ void LoaderJoinTick() {
 
 void JoinTick() {
 	if (g_join.step == 0) return;
-	if (++g_join.ticks < kJoinWait) {
+	// Typing goes a character every few frames; the other steps wait longer.
+	if (++g_join.ticks < (g_join.loader && g_join.step == 4 && g_join.typed > 0 ? 4 : kJoinWait)) {
 		OnUi(JoinTick);
 		return;
 	}
