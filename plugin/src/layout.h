@@ -28,8 +28,8 @@ struct PanelView {
 	std::string status;       // one line under the title
 	bool hosting = false;
 	std::string hostingText;  // shown instead of the create form while hosting
-	// Shown as the D2R Rooms tab of D2RLoader's own Multiplayer window, in place
-	// of its tab content: no frame, and its CREATE GAME hosts (no create form).
+	// The D2R Rooms window, in place of D2RLoader's own Multiplayer window
+	// with the same tabs: its CREATE GAME hosts, so no create form here.
 	bool tab = false;
 };
 
@@ -44,14 +44,13 @@ std::string PanelLayout(const PanelView& view);
 // The D2R Rooms tab button, beside BROWSE GAMES in D2RLoader's window.
 std::string TabLayout();
 
-// A button of the tab or its list, in layout units (2160 high) from the top
-// middle of the screen. D2RLoader's window is modal and takes the mouse, so
-// the plugin hit-tests the cursor against these on a click.
+// The tab button, in layout units (2160 high) from the top middle of the
+// screen. D2RLoader's window is modal and takes the mouse, so the plugin
+// hit-tests the cursor against it on a click.
 struct HitArea {
 	int x, y, width, height;
-	std::string command, argument;  // as the button's own message: "Join", "3"
+	std::string command, argument;  // as the button's own message
 };
-// The tab button and, when view.tab, the list's buttons.
-std::vector<HitArea> TabHitAreas(const PanelView& view);
+std::vector<HitArea> TabHitAreas();
 
 }  // namespace rooms

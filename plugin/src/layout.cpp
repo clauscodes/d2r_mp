@@ -17,24 +17,24 @@ constexpr int kRowTop = 330;
 constexpr int kRowStep = 150;
 
 // D2RLoader's Multiplayer window (1.3.1-beta), anchored at the top middle of
-// the screen, in layout units (2160 high): its tabs HOST GAME and BROWSE GAMES
-// span x -264..264 at y 285..384, its tab content x -866..866, y 437..1651.
-// Measured from a screenshot: the plugin cannot read that window's own rect.
+// the screen, in layout units (2160 high): the window spans x -960..960,
+// y 131..1751, its tabs HOST GAME and BROWSE GAMES x -264..264 at y 285..384,
+// its tab content y 437..1651. Measured from screenshots and logged clicks:
+// the plugin cannot read that window's own rect.
+constexpr int kWindowX = -960;
+constexpr int kWindowY = 131;
+constexpr int kWindowWidth = 1920;
+constexpr int kWindowHeight = 1620;
 constexpr int kTabX = 270;
 constexpr int kTabY = 285;
 constexpr int kTabWidth = 260;
 constexpr int kTabHeight = 100;
-constexpr int kContentX = -866;
 constexpr int kContentY = 437;
-constexpr int kContentWidth = 1732;
-constexpr int kContentHeight = 1214;
-// FrontEnd_ButtonSmall as drawn there (measured), and the list's rows.
+// FrontEnd_ButtonSmall as drawn there (measured).
 constexpr int kButtonWidth = 340;
 constexpr int kButtonHeight = 90;
-constexpr int kTabRowTop = 90;
-constexpr int kTabBottom = kTabRowTop + kRowsPerPage * kRowStep + 20;
 // Above D2RLoader's own layers (its front-end buttons use 2000000001), so its
-// window's dimming does not cover the tab and the list.
+// window's dimming does not cover the tab button.
 constexpr int kLoaderPriority = 2100000000;
 
 std::string Rect(int x, int y, int w = -1, int h = -1) {
@@ -102,42 +102,44 @@ void Rows(const PanelView& view, int page, int x, int top, int textW, int button
 	}
 }
 
-struct ButtonSpec {
-	std::string name;
-	int x, y;  // in the list panel
-	std::string label, command, argument;
-};
-
-// The list's buttons inside D2RLoader's window: drawn by TabContentLayout,
-// and hit-tested by the plugin (that modal window takes the mouse clicks).
-std::vector<ButtonSpec> TabContentButtons(const PanelView& view, int pages, int page) {
-	const int buttonX = kContentWidth - kButtonWidth - 20;
-	std::vector<ButtonSpec> buttons;
-	const size_t first = static_cast<size_t>(page) * kRowsPerPage;
-	for (int i = 0; i < kRowsPerPage && first + i < view.rooms.size(); ++i)
-		buttons.push_back({"Join" + std::to_string(i), buttonX, kTabRowTop + i * kRowStep + 10, "Join", "Join", std::to_string(i)});
-	if (view.hosting) buttons.push_back({"CloseRoom", buttonX, kTabBottom + 10, "Close room", "CloseRoom", ""});
-	const int y = kContentHeight - kButtonHeight - 10;
-	if (page > 0) buttons.push_back({"Prev", 40, y, "Back", "Prev", ""});
-	buttons.push_back({"Refresh", (kContentWidth - kButtonWidth) / 2, y, "Refresh", "Refresh", ""});
-	if (page + 1 < pages) buttons.push_back({"Next", buttonX, y, "More", "Next", ""});
-	return buttons;
-}
-
-// Inside D2RLoader's window, in place of its tab content.
-std::string TabContentLayout(const PanelView& view, int pages, int page) {
-	const int textW = kContentWidth - kButtonWidth - 100;
+// The D2R Rooms window: in place of D2RLoader's Multiplayer window, the same
+// size and spot, with the same three tabs. HOST GAME and BROWSE GAMES go back
+// to D2RLoader's window; this one is an ordinary panel, so its buttons and
+// its password field take clicks and typing.
+std::string WindowLayout(const PanelView& view, int pages, int page) {
+	const int left = 134, right = kWindowWidth - 134;
+	const int buttonX = right - kButtonWidth;
+	const int textW = buttonX - left - 40;
 	std::vector<std::string> children;
-	if (!view.status.empty()) children.push_back(Text("Status", Rect(40, 0, kContentWidth - 80, 70), view.status, Style("$SmallFontSize", "center", true)));
-	Rows(view, page, 40, kTabRowTop, textW, -1, children);
+	children.push_back("{\"type\":\"GridImageWidget\",\"name\":\"Background\",\"fields\":{\"filename\":\"PANEL\\\\TCP_IP\\\\TCP_IP_PanelBG\"}}");
+	children.push_back("{\"type\":\"TextBoxWidget\",\"name\":\"Title\",\"fields\":{\"rect\":" + Rect(0, 30, kWindowWidth, 90) +
+		",\"text\":\"Multiplayer\",\"style\":\"$StyleTitleBlock\"}}");
+	children.push_back(
+		"{\"type\":\"ButtonWidget\",\"name\":\"Close\",\"fields\":{\"rect\":" + Rect(kWindowWidth - 90, 9) +
+		",\"filename\":\"PANEL\\\\closebtn_4x\",\"hoveredFrame\":3,\"onClickMessage\":\"" + std::string(kMessageTarget) + ":Close\"}}");
+	// The tabs where D2RLoader's are, ours selected.
+	children.push_back(Button("HostTab", kTabX - kWindowX - 2 * (kButtonWidth + 10), kTabY - kWindowY, "Host Game", "ToHost"));
+	children.push_back(Button("BrowseTab", kTabX - kWindowX - (kButtonWidth + 10), kTabY - kWindowY, "Browse Games", "ToBrowse"));
+	children.push_back(Button("RoomsTab", kTabX - kWindowX, kTabY - kWindowY, "D2R Rooms", "Tab"));
+
+	const int top = kContentY - kWindowY;
+	if (!view.status.empty())
+		children.push_back(Text("Status", Rect(left, top, right - left, 70), view.status, Style("$SmallFontSize", "center", true)));
+	Rows(view, page, left, top + 90, textW, buttonX, children);
+
+	const int bottom = top + 90 + kRowsPerPage * kRowStep + 20;
 	if (view.hosting) {
-		children.push_back(Text("Hosting", Rect(40, kTabBottom, textW, 120), view.hostingText, Style("$SmallFontSize", "left", true)));
+		children.push_back(Text("Hosting", Rect(left, bottom, textW, 120), view.hostingText, Style("$SmallFontSize", "left", true)));
+		children.push_back(Button("CloseRoom", buttonX, bottom + 10, "Close room", "CloseRoom"));
 	} else {
-		children.push_back(Text("NameLabel", Rect(40, kTabBottom, 700, 40), "Password of a locked room", Style("$SmallFontSize", "left", false)));
-		children.push_back(PasswordField(80, kTabBottom + 75));
+		children.push_back(Text("NameLabel", Rect(left, bottom, 700, 40), "Password of a locked room", Style("$SmallFontSize", "left", false)));
+		children.push_back(PasswordField(left + 40, bottom + 75));
 	}
-	for (const ButtonSpec& b : TabContentButtons(view, pages, page)) children.push_back(Button(b.name, b.x, b.y, b.label, b.command, b.argument));
-	return Panel(kPanelName, "{\"x\":0.5,\"y\":0}", Rect(kContentX, kContentY, kContentWidth, kContentHeight), kLoaderPriority, children);
+	const int y = kWindowHeight - kButtonHeight - 40;
+	if (page > 0) children.push_back(Button("Prev", left, y, "Back", "Prev"));
+	children.push_back(Button("Refresh", (kWindowWidth - kButtonWidth) / 2, y, "Refresh", "Refresh"));
+	if (page + 1 < pages) children.push_back(Button("Next", buttonX, y, "More", "Next"));
+	return Panel(kPanelName, "{\"x\":0.5,\"y\":0}", Rect(kWindowX, kWindowY, kWindowWidth, kWindowHeight), kLoaderPriority, children);
 }
 
 }  // namespace
@@ -155,7 +157,7 @@ std::string FieldText(std::string_view text) {
 std::string PanelLayout(const PanelView& view) {
 	const int pages = PageCount(view.rooms.size());
 	const int page = std::clamp(view.page, 0, pages - 1);
-	if (view.tab) return TabContentLayout(view, pages, page);
+	if (view.tab) return WindowLayout(view, pages, page);
 
 	const int buttonX = 870;
 	std::vector<std::string> children;
@@ -183,14 +185,9 @@ std::string PanelLayout(const PanelView& view) {
 	return Panel(kPanelName, "{\"x\":0.5,\"y\":0.1}", Rect(kPanelX, 0, kPanelWidth, kPanelHeight), 8500, children);
 }
 
-std::vector<HitArea> TabHitAreas(const PanelView& view) {
+std::vector<HitArea> TabHitAreas() {
 	// A little larger than the button: its sprite was measured from a screenshot.
-	std::vector<HitArea> areas {{kTabX - 10, kTabY - 10, kButtonWidth + 20, kButtonHeight + 50, "Tab", ""}};
-	if (!view.tab) return areas;
-	const int pages = PageCount(view.rooms.size());
-	for (const ButtonSpec& b : TabContentButtons(view, pages, std::clamp(view.page, 0, pages - 1)))
-		areas.push_back({kContentX + b.x, kContentY + b.y, kButtonWidth, kButtonHeight, b.command, b.argument});
-	return areas;
+	return {{kTabX - 10, kTabY - 10, kButtonWidth + 20, kButtonHeight + 50, "Tab", ""}};
 }
 
 std::string TabLayout() {

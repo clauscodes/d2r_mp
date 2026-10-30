@@ -49,7 +49,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.4.1",
+	.version     = "0.5.0",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -362,10 +362,15 @@ void ShowPanel(bool show) {
 
 void Refresh();
 
-// --- the D2R Rooms tab in D2RLoader's Multiplayer window -------------------
-// The window is built in D2RLoader's code, so the tab is a panel of its own
-// beside BROWSE GAMES, and the list is drawn where the window's tab content
-// was, with that content hidden.
+// --- the D2R Rooms window in place of D2RLoader's Multiplayer window --------
+// D2RLoader builds its window in its code and it is modal, so the D2R Rooms
+// tab beside its BROWSE GAMES is a panel of its own (clicks matched by
+// HandleClick), and pressing it swaps that window for ours: the same size and
+// spot, the same tabs, an ordinary panel. HOST GAME / BROWSE GAMES swap back.
+
+bool Dispatch(const char* target, const char* command, const char* text);
+// Until then a close of D2RLoader's window is the one EnterTab sends.
+std::chrono::steady_clock::time_point g_swapUntil;
 
 void ShowTabButton(bool show) {
 	if (show == g_tabButtonOpen) return;
@@ -374,41 +379,36 @@ void ShowTabButton(bool show) {
 	g_tabButtonOpen = show && r == D2RL::Panels::Result::Success;
 }
 
-// Shows or hides one of D2RLoader's tab contents (HostContainer, BrowseContainer).
-void SetLoaderContent(const char* name, bool visible) {
-	D2RL::Widgets::WidgetHandle panel = D2RL::Widgets::InvalidHandle, h = D2RL::Widgets::InvalidHandle;
-	auto r = g_widgets->findPanel(g_ctx, kLoaderPanel, &panel);
-	if (r == D2RL::Widgets::Result::Success) r = g_widgets->findWidget(g_ctx, panel, name, &h);
-	if (r == D2RL::Widgets::Result::Success) r = g_widgets->setWidgetVisible(g_ctx, h, visible);
-	Log("tab: %s %s -> %u", name, visible ? "shown" : "hidden", static_cast<unsigned>(r));
-}
-
 void EnterTab() {
 	if (g_tabActive) return;
 	g_tabActive = true;
-	SetLoaderContent("HostContainer", false);
-	SetLoaderContent("BrowseContainer", false);
 	SetStatus("Loading the rooms...");
-	ShowPanel(true);
-	Refresh();
+	OnUi([] {
+		g_swapUntil = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+		Dispatch(kLoaderMessage, "Close", "");
+		ShowPanel(true);
+		Refresh();
+	});
 }
 
-// D2RLoader's window closed: the tab and the list with it.
+// D2RLoader's window closed (or D2R left the front-end): its tab button with it,
+// and the D2R Rooms window unless it is replacing that window.
 void CloseLoaderUi() {
 	g_loaderUi = false;
+	ShowTabButton(false);
+	if (std::chrono::steady_clock::now() < g_swapUntil) return;
 	g_tabActive = false;
 	ShowPanel(false);
-	ShowTabButton(false);
 }
 
-// `toHost`: back to HOST GAME, else to BROWSE GAMES. D2RLoader switches its own
-// tabs too; this undoes only what EnterTab hid.
-void LeaveTab(bool toHost) {
-	if (!g_tabActive) return;
+// Back to D2RLoader's window on one of its tabs ("ShowHost", "ShowBrowse").
+void OpenLoaderWindow(const char* tab) {
 	g_tabActive = false;
 	ShowPanel(false);
-	SetLoaderContent("HostContainer", toHost);
-	SetLoaderContent("BrowseContainer", !toHost);
+	OnUi([tab] {
+		Dispatch("PanelManager", "OpenPanel", kLoaderPanel);
+		OnUi([tab] { Dispatch(kLoaderMessage, tab, ""); });
+	});
 }
 
 // Asks every relay in the list, and every relay a listed room uses, for its
@@ -528,15 +528,23 @@ void JoinTick();
 void LoaderJoinTick() {
 	const auto box = [] { return ReadInput(kLoaderPanel, {"DirectJoinAddressInput"}); };
 	if (g_join.step == 1) {
-		Dispatch(kLoaderMessage, "OpenDirectJoin");
+		// From the D2R Rooms window: D2RLoader's window comes back first.
+		if (!g_loaderUi) Dispatch("PanelManager", "OpenPanel", kLoaderPanel);
 		g_join.step = 2;
 		OnUi(JoinTick);
 		return;
 	}
 	if (g_join.step == 2) {
+		Dispatch(kLoaderMessage, "ShowBrowse");
+		Dispatch(kLoaderMessage, "OpenDirectJoin");
+		g_join.step = 3;
+		OnUi(JoinTick);
+		return;
+	}
+	if (g_join.step == 3) {
 		Log("join: direct join box had '%s'", box().c_str());
 		TypeText(g_join.address);
-		g_join.step = 3;
+		g_join.step = 4;
 		OnUi(JoinTick);
 		return;
 	}
@@ -582,14 +590,13 @@ void JoinTick() {
 
 void StartJoin(const JoinAnswer& answer) {
 	// D2R's TCP/IP join takes an address without a port; the board lists port 4000.
-	g_join = {.step = 1, .ticks = 0, .address = answer.address, .loader = g_loaderUi};
+	g_join = {.step = 1, .ticks = 0, .address = answer.address, .loader = g_loaderUi || g_tabActive};
 	const bool relayed = answer.relay && answer.address.rfind("127.", 0) == 0;
 	SetStatus((relayed ? "Joining through the relay (" + answer.address + ")" : "Joining " + answer.address) +
 	          (answer.modMismatch ? " (the host plays another mod)" : ""));
-	// Closed so that the typing goes to the join box, not to this panel's field;
-	// D2RLoader's Direct Join opens over its BROWSE GAMES content.
-	if (g_tabActive) LeaveTab(false);
-	else ShowPanel(false);
+	// Closed so that the typing goes to the join box, not to this panel's field.
+	g_tabActive = false;
+	ShowPanel(false);
 	if (!g_join.loader) Dispatch("FrontEndNavigation", "ToJoinGame");
 	OnUi(JoinTick);
 }
@@ -918,9 +925,12 @@ void LogLoaderPanel() {
 
 void HandleOwn(const std::string& command, const std::string& text) {
 	if (command == "Close") {
+		g_tabActive = false;
 		ShowPanel(false);
 	} else if (command == "Tab") {
-		EnterTab();
+		if (g_loaderUi) EnterTab();  // in the D2R Rooms window it is the selected tab
+	} else if (command == "ToHost" || command == "ToBrowse") {
+		OpenLoaderWindow(command == "ToHost" ? "ShowHost" : "ShowBrowse");
 	} else if (command == "Refresh") {
 		SetStatus("Loading the rooms...");
 		ApplyLayout();
@@ -954,7 +964,7 @@ void HandleClick() {
 	const double scale = std::min(rc.right / 3840.0, rc.bottom / 2160.0);
 	const int x = static_cast<int>((p.x - rc.right / 2.0) / scale);
 	const int y = static_cast<int>(p.y / scale);
-	for (const HitArea& a : TabHitAreas(CurrentView())) {
+	for (const HitArea& a : TabHitAreas()) {
 		if (x < a.x || x >= a.x + a.width || y < a.y || y >= a.y + a.height) continue;
 		Log("click: %d,%d -> %s %s", x, y, a.command.c_str(), a.argument.c_str());
 		g_lastClickCommand = a.command;
@@ -1002,8 +1012,6 @@ D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContex
 	} else if (target == kLoaderMessage && command == "Close") {
 		// D2RLoader closes its window with its own message, not ClosePanel.
 		OnUi(CloseLoaderUi);
-	} else if (target == kLoaderMessage && (command == "ShowHost" || command == "ShowBrowse")) {
-		OnUi([toHost = command == "ShowHost"] { LeaveTab(toHost); });
 	} else if (target == kLoaderMessage && command == "CreateGame") {
 		// Read its fields now, before D2RLoader moves on; it hosts by itself.
 		try {

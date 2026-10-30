@@ -185,43 +185,34 @@ void TestLayout() {
 	}
 	CHECK(hostingShown && !formShown);
 
-	// As the tab of D2RLoader's Multiplayer window: its CREATE GAME hosts, so
-	// only the password field is left, with no frame, and no empty texts.
+	// The D2R Rooms window in place of D2RLoader's: its CREATE GAME hosts, so
+	// only the password field is left; the three tabs; no empty texts.
 	view.hosting = false;
 	view.tab = true;
 	view.rooms[0].players.clear();
 	layout = json::Parse(PanelLayout(view));
 	CHECK(layout.has_value());
-	bool passwordShown = false, createShown = false, frameShown = false, emptyText = false;
+	bool passwordShown = false, createShown = false, tabs = false, emptyText = false;
+	size_t joins2 = 0;
 	for (size_t i = 0; i < (*layout)["children"].size(); ++i) {
 		const json::Value& c = (*layout)["children"][i];
 		const std::string name = c["name"].asString();
 		passwordShown |= name == "RoomName";
 		createShown |= name == "Create";
-		frameShown |= name == "Background" || name == "Close";
+		tabs |= name == "HostTab" || name == "BrowseTab";
+		joins2 += name.rfind("Join", 0) == 0;
 		emptyText |= c["type"].asString() == "TextBoxWidget" && c["fields"]["text"].asString().empty();
 	}
-	CHECK(passwordShown);
-	CHECK(!createShown && !frameShown);
+	CHECK(passwordShown && !createShown && tabs);
+	CHECK(joins2 == std::min<size_t>(view.rooms.size(), kRowsPerPage));
 	CHECK(!emptyText);
 	CHECK((*layout)["fields"]["anchor"]["y"].asNumber() == 0);
 
-	// The tab button is a panel of its own, named as the plugin registers it.
+	// The tab button is a panel of its own, named as the plugin registers it,
+	// and the plugin matches clicks on it itself.
 	const auto tab = json::Parse(TabLayout());
 	CHECK(tab && (*tab)["name"].asString() == kTabPanelName && (*tab)["children"][0]["name"].asString() == "Tab");
-
-	// Clicks are matched by the plugin: the tab, then each row's Join and Refresh.
-	view.tab = false;
-	CHECK(TabHitAreas(view).size() == 1 && TabHitAreas(view)[0].command == "Tab");
-	view.tab = true;
-	view.page = 0;
-	size_t joinAreas = 0;
-	bool refreshArea = false;
-	for (const HitArea& a : TabHitAreas(view)) {
-		joinAreas += a.command == "Join";
-		refreshArea |= a.command == "Refresh";
-	}
-	CHECK(joinAreas == std::min<size_t>(view.rooms.size(), kRowsPerPage) && refreshArea);
+	CHECK(TabHitAreas().size() == 1 && TabHitAreas()[0].command == "Tab");
 }
 
 void TestRelay() {

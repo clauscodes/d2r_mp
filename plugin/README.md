@@ -11,18 +11,22 @@ the rooms list opens beside it:
   is removed when you leave the game, or with *Close room*.
 
 D2RLoader 1.3.1's **Multiplayer** button opens its own window (*HOST GAME* /
-*BROWSE GAMES*) instead of D2R's TCP/IP screen. 0.4 adds a **D2R Rooms** tab
-right after *BROWSE GAMES*: pressing it hides that window's tab content and
-shows the board's rooms in its place (relay mark, VR version, players, Join).
+*BROWSE GAMES*) instead of D2R's TCP/IP screen. The plugin adds a **D2R Rooms**
+tab right after *BROWSE GAMES*. Pressing it swaps that window for the D2R
+Rooms window: the same size and spot, the same three tabs, and the board's
+rooms (relay mark, VR version, players, Join, the password of a locked room).
+*Host Game* / *Browse Games* there swap back to D2RLoader's window.
 
 - **Host** with D2RLoader's own *CREATE GAME*: the plugin reads its game name
   and password and lists the room (through a relay when `mode` says so).
-- **Join** in the tab opens D2RLoader's *Direct Join*, types the address
-  (`127.0.0.1` through a relay) and presses Join. If the typing does not reach
-  the box, the status line says what to type.
+- **Join** brings D2RLoader's window back, opens its *Direct Join*, types the
+  address (`127.0.0.1` through a relay) and presses Join; if the typing does
+  not reach the box, the log says so and the player types it.
 
-The window is built in D2RLoader's code, so the tab is the plugin's own panel
-placed over it (at measured coordinates), not a real tab of that window.
+D2RLoader builds its window in its code and it is modal: a plugin cannot add
+to it, and clicks there never reach a plugin's button. So the tab button is
+the plugin's own panel at measured coordinates, and the plugin matches the
+cursor against it on each click.
 
 Works with any D2RLoader setup — D2R VR Authentic, D2R VR Unleashed or no mod.
 It is a client-only plugin: nothing in game data or saves, not needed by other
