@@ -113,17 +113,17 @@ void TestBoard() {
 }
 
 void TestLayout() {
-	CHECK(PageCount(0) == 1 && PageCount(6) == 1 && PageCount(7) == 2);
+	CHECK(PageCount(0) == 1 && PageCount(5) == 1 && PageCount(6) == 2);
 	CHECK(FieldText("@strHack") == " @strHack" && FieldText("$Style") == " $Style" && FieldText("ok") == "ok");
 
 	PanelView view;
 	view.rooms = *ParseRooms(kRooms);
-	for (int i = 0; i < 6; ++i) view.rooms.push_back(view.rooms[1]);  // 8 rooms -> 2 pages
+	for (int i = 0; i < 6; ++i) view.rooms.push_back(view.rooms[1]);  // 8 rooms -> 2 pages of 5
 	view.status = "8 open rooms";
 
 	auto layout = json::Parse(PanelLayout(view));
 	CHECK(layout.has_value());
-	CHECK((*layout)["name"].asString() == kPanelName);
+	CHECK((*layout)["name"].asString() == PanelName(0));
 	const json::Value& kids = (*layout)["children"];
 	int joins = 0;
 	bool next = false, prev = false, input = false;
@@ -142,7 +142,7 @@ void TestLayout() {
 	CHECK(joins == kRowsPerPage && next && !prev && input);
 	CHECK(firstRoom == RoomLine(view.rooms[0]));
 
-	view.page = 5;  // clamped to the last page: 2 rooms there, Back but no More
+	view.page = 5;  // clamped to the last page: 3 rooms there, Back but no More
 	layout = json::Parse(PanelLayout(view));
 	joins = 0;
 	next = prev = false;
@@ -152,7 +152,7 @@ void TestLayout() {
 		if (name == "Next") next = true;
 		if (name == "Prev") prev = true;
 	}
-	CHECK(joins == 2 && prev && !next);
+	CHECK(joins == 3 && prev && !next);
 
 	// A hostile room name stays one JSON string and cannot become a reference.
 	view = {};
@@ -207,7 +207,11 @@ void TestLayout() {
 	CHECK(!passwordShown && !createShown && tabs);
 	CHECK(joins2 == std::min<size_t>(view.rooms.size(), kRowsPerPage));
 	CHECK(!emptyText);
-	CHECK((*layout)["fields"]["anchor"]["y"].asNumber() == 0);
+	// On the TCP/IP screen's art, where D2R puts that screen; named by its pool slot.
+	CHECK((*layout)["fields"]["rect"]["width"].asInt() == 1162 && (*layout)["fields"]["rect"]["x"].asInt() == -581);
+	view.slot = 9;
+	CHECK((*json::Parse(PanelLayout(view)))["name"].asString() == "d2r-rooms/Rooms9" && PanelPath(9) == "data/global/ui/layouts/d2r-rooms/Rooms9hd.json");
+	view.slot = 0;
 
 	// Join on a locked room asks for its password in the window.
 	view.passwordFor = "test";

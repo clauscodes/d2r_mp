@@ -1,6 +1,7 @@
 // The rooms panel as a D2R layout (the game's own widgets, built as JSON).
-// D2R widgets cannot change their text from a plugin, so the plugin rebuilds
-// this layout whenever the list changes and reopens the panel.
+// D2R widgets cannot change their text from a plugin, and D2R reads a panel's
+// layout only the first time it opens in a session. So the plugin registers a
+// pool of panels and shows every new layout in a panel not opened before.
 #pragma once
 
 #include <string>
@@ -12,15 +13,18 @@
 namespace rooms {
 
 inline constexpr const char* kPluginId = "d2r-rooms";
-inline constexpr const char* kPanelLocalId = "RoomsPanel";
-inline constexpr const char* kPanelName = "d2r-rooms/RoomsPanel";
-inline constexpr const char* kPanelPath = "data/global/ui/layouts/d2r-rooms/RoomsPanelhd.json";
+// The pool: panel "Rooms<slot>" with its layout at its own path.
+inline constexpr int kPanelSlots = 64;
+std::string PanelLocalId(int slot);  // "Rooms7"
+std::string PanelName(int slot);     // "d2r-rooms/Rooms7"
+std::string PanelPath(int slot);     // "data/global/ui/layouts/d2r-rooms/Rooms7hd.json"
 inline constexpr const char* kTabPanelLocalId = "RoomsTab";
 inline constexpr const char* kTabPanelName = "d2r-rooms/RoomsTab";
 inline constexpr const char* kTabPanelPath = "data/global/ui/layouts/d2r-rooms/RoomsTabhd.json";
 // Target of the panel's own button messages ("D2RRooms:Join:3").
 inline constexpr const char* kMessageTarget = "D2RRooms";
-inline constexpr int kRowsPerPage = 6;
+// Five rows fit the TCP/IP art's list box (its inner box ends near y 1014).
+inline constexpr int kRowsPerPage = 5;
 
 struct PanelView {
 	std::vector<Room> rooms;  // the whole list; the page picks the rows
@@ -33,6 +37,7 @@ struct PanelView {
 	bool tab = false;
 	// Names the title widget ("Title12"): the plugin checks which layout D2R shows.
 	int generation = 0;
+	int slot = 0;  // the pool's panel this layout is for
 	// Join was pressed on this locked room: its password is asked for.
 	std::string passwordFor;
 };

@@ -49,7 +49,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.6.0",
+	.version     = "0.7.0",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -64,10 +64,13 @@ const D2RL::ThreadService*      g_threads = nullptr;
 const D2RL::HttpService*        g_http = nullptr;
 const D2RL::LifecycleService*   g_life = nullptr;
 
-D2RL::Panels::RegistrationHandle    g_panel = D2RL::Panels::InvalidHandle;
+// The pool of rooms panels (layout.h); g_slot is the one shown or last shown.
+D2RL::Panels::RegistrationHandle    g_pool[kPanelSlots] {};
+D2RL::Resources::RegistrationHandle g_poolLayout[kPanelSlots] {};
+int g_slot = -1;
+int g_nextSlot = 0;
 D2RL::Panels::RegistrationHandle    g_tabPanel = D2RL::Panels::InvalidHandle;
 D2RL::Resources::RegistrationHandle g_tabLayout = D2RL::Resources::InvalidHandle;
-D2RL::Resources::RegistrationHandle g_layout = D2RL::Resources::InvalidHandle;
 
 std::string g_server = kDefaultServer;
 Mod g_mod;
@@ -287,15 +290,14 @@ std::string RelaysLine() {  // under g_mu
 }
 
 PanelView CurrentView();
-void ApplyLayoutText(const PanelView& view, const std::string& layout);
-void OpenLater(int gen, int ticks, int tries);
+void ApplyLayoutText(PanelView& view);
+void OpenLater(int gen, int ticks);
 int g_layoutGen = 0;  // bumps with every layout, UI thread
 
 void ApplyLayout() {
 	PanelView view = CurrentView();
 	view.generation = ++g_layoutGen;
-	const std::string layout = PanelLayout(view);
-	ApplyLayoutText(view, layout);
+	ApplyLayoutText(view);
 }
 
 PanelView CurrentView() {
@@ -320,44 +322,50 @@ PanelView CurrentView() {
 	return view;
 }
 
-void ApplyLayoutText(const PanelView& view, const std::string& layout) {
-	// Closed now, opened a couple of frames later: reopened in the same frame,
-	// D2R kept showing the panel's older layout (the status stayed "Loading").
-	if (g_panelOpen) g_panels->closePanel(g_ctx, g_panel);
-	if (g_layout != D2RL::Resources::InvalidHandle) g_resources->unregisterResource(g_ctx, g_layout);
-	g_layout = D2RL::Resources::InvalidHandle;
+// Every new layout goes to the pool's next panel, one D2R has not opened yet
+// this session: D2R reads a panel's layout only on its first open, and showed
+// "Loading the rooms..." for good otherwise. After the whole pool, the oldest
+// panel comes again (it may show an old layout; the log says so).
+void ApplyLayoutText(PanelView& view) {
+	if (g_panelOpen && g_slot >= 0) g_panels->closePanel(g_ctx, g_pool[g_slot]);
+	const int slot = g_nextSlot++ % kPanelSlots;
+	if (g_nextSlot == kPanelSlots + 1) Log("panel: the pool of %d panels is used up; reusing them", kPanelSlots);
+	view.slot = slot;
+	g_slot = slot;
+	const std::string layout = PanelLayout(view);
+	const std::string path = PanelPath(slot);
+	if (g_poolLayout[slot] != D2RL::Resources::InvalidHandle) g_resources->unregisterResource(g_ctx, g_poolLayout[slot]);
+	g_poolLayout[slot] = D2RL::Resources::InvalidHandle;
 	const D2RL::Resources::ResourceRegistration resource {
 		.structSize = D2RL::Resources::ResourceRegistrationSize,
 		.flags      = 0,
-		.path       = kPanelPath,
+		.path       = path.c_str(),
 		.bytes      = layout.data(),
 		.byteCount  = layout.size(),
 	};
-	const auto registered = g_resources->registerResource(g_ctx, &resource, &g_layout);
+	const auto registered = g_resources->registerResource(g_ctx, &resource, &g_poolLayout[slot]);
 	if (registered != D2RL::Resources::Result::Success) Log("layout: register failed %u", static_cast<unsigned>(registered));
-	if (g_panelOpen) OpenLater(view.generation, 2, 0);
+	if (g_panelOpen) OpenLater(view.generation, 1);
 }
 
-// Opens the panel `ticks` UI updates from now if it is still meant to be open
-// with layout `gen`, and checks a frame later that D2R shows that layout (its
-// title widget carries the number); if not, closes and tries again later.
-void OpenLater(int gen, int ticks, int tries) {
+// Opens the current panel `ticks` UI updates from now if it is still meant to
+// be open with layout `gen`, and logs a frame later whether D2R shows that
+// layout (its title widget carries the number).
+void OpenLater(int gen, int ticks) {
 	if (gen != g_layoutGen || !g_panelOpen) return;
 	if (ticks > 0) {
-		OnUi([=] { OpenLater(gen, ticks - 1, tries); });
+		OnUi([=] { OpenLater(gen, ticks - 1); });
 		return;
 	}
-	const auto opened = g_panels->openPanel(g_ctx, g_panel);
+	const int slot = g_slot;
+	const auto opened = g_panels->openPanel(g_ctx, g_pool[slot]);
 	if (opened != D2RL::Panels::Result::Success) Log("panel: open failed %u", static_cast<unsigned>(opened));
-	OnUi([gen, tries] {
+	OnUi([gen, slot] {
 		if (gen != g_layoutGen || !g_panelOpen) return;
 		D2RL::Widgets::WidgetHandle panel = D2RL::Widgets::InvalidHandle, title = D2RL::Widgets::InvalidHandle;
-		const bool shown = g_widgets->findPanel(g_ctx, kPanelName, &panel) == D2RL::Widgets::Result::Success &&
+		const bool shown = g_widgets->findPanel(g_ctx, PanelName(slot).c_str(), &panel) == D2RL::Widgets::Result::Success &&
 		                   g_widgets->findWidget(g_ctx, panel, ("Title" + std::to_string(gen)).c_str(), &title) == D2RL::Widgets::Result::Success;
-		Log("panel: layout %d %s%s", gen, shown ? "shown" : "NOT shown, try ", shown ? "" : std::to_string(tries + 1).c_str());
-		if (shown || tries >= 3) return;
-		g_panels->closePanel(g_ctx, g_panel);
-		OpenLater(gen, 10 * (tries + 1), tries + 1);
+		Log("panel: layout %d in panel %d %s", gen, slot, shown ? "shown" : "NOT shown");
 	});
 }
 
@@ -367,10 +375,15 @@ void ShowPanel(bool show) {
 	if (show) {
 		ApplyLayout();
 		Log("panel: open");
-	} else {
-		const auto closed = g_panels->closePanel(g_ctx, g_panel);
+	} else if (g_slot >= 0) {
+		const auto closed = g_panels->closePanel(g_ctx, g_pool[g_slot]);
 		Log("panel: close -> %u", static_cast<unsigned>(closed));
 	}
+}
+
+// The current panel's name, for reading its password field.
+std::string CurrentPanel() {
+	return PanelName(std::max(g_slot, 0));
 }
 
 void Refresh();
@@ -678,7 +691,7 @@ void Join(int row) {
 		ApplyLayout();
 		return;
 	}
-	const std::string password = room.locked ? ReadInput(kPanelName, {"RoomName"}) : std::string();
+	const std::string password = room.locked ? ReadInput(CurrentPanel().c_str(), {"RoomName"}) : std::string();
 	if (room.locked && password.empty()) {
 		Log("join: room %s has a password, the field is empty", room.code.c_str());
 		SetStatus("Room " + room.name + " has a password: type it into the field below, then Join.");
@@ -919,7 +932,7 @@ void CreateRoom(std::string name, const std::string& password, bool loader) {
 
 void Create() {
 	if (Hosting()) return;
-	CreateRoom(ReadInput(kPanelName, {"RoomName"}), {}, false);
+	CreateRoom(ReadInput(CurrentPanel().c_str(), {"RoomName"}), {}, false);
 }
 
 // D2RLoader's CREATE GAME: the same room, named as its game. A room still
@@ -961,7 +974,7 @@ void HandleOwn(const std::string& command, const std::string& text) {
 		g_tabActive = false;
 		ShowPanel(false);
 	} else if (command == "JoinWithPassword" && g_passwordRoom) {
-		const std::string password = ReadInput(kPanelName, {"RoomName"});
+		const std::string password = ReadInput(CurrentPanel().c_str(), {"RoomName"});
 		if (password.empty()) {
 			SetStatus("Type the password of " + g_passwordRoom->name + " first.");
 			ApplyLayout();
@@ -1216,15 +1229,31 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	for (const RelayServer& r : g_relayCfg.relays) Log("relay: %s = %s%s", r.name.c_str(), r.url.c_str(), r.key.empty() ? "" : " (with a key)");
 	Log("command line: %s", GetCommandLineA());  // does D2RLoader's -mod reach D2R.exe?
 
-	ApplyLayout();  // the panel's layout must exist before the panel
-	const D2RL::Panels::PanelRegistration panel {
-		.structSize = D2RL::Panels::PanelRegistrationSize,
-		.flags      = D2RL::Panels::PanelFlags::CloseOnEscape,
-		.localId    = kPanelLocalId,
-	};
-	if (g_panels->registerPanel(context, &panel, &g_panel) != D2RL::Panels::Result::Success) {
-		D2RL::LogError(context, "d2r-rooms: panel registration failed");
-		return false;
+	// The pool of rooms panels, each with a layout before it is registered;
+	// every later layout replaces one before that panel's first open.
+	for (int slot = 0; slot < kPanelSlots; ++slot) {
+		PanelView empty;
+		empty.slot = slot;
+		const std::string layout = PanelLayout(empty);
+		const std::string path = PanelPath(slot);
+		const std::string localId = PanelLocalId(slot);
+		const D2RL::Resources::ResourceRegistration resource {
+			.structSize = D2RL::Resources::ResourceRegistrationSize,
+			.flags      = 0,
+			.path       = path.c_str(),
+			.bytes      = layout.data(),
+			.byteCount  = layout.size(),
+		};
+		const D2RL::Panels::PanelRegistration panel {
+			.structSize = D2RL::Panels::PanelRegistrationSize,
+			.flags      = D2RL::Panels::PanelFlags::CloseOnEscape,
+			.localId    = localId.c_str(),
+		};
+		if (g_resources->registerResource(context, &resource, &g_poolLayout[slot]) != D2RL::Resources::Result::Success ||
+		    g_panels->registerPanel(context, &panel, &g_pool[slot]) != D2RL::Panels::Result::Success) {
+			D2RL::LogError(context, "d2r-rooms: panel registration failed");
+			return false;
+		}
 	}
 
 	// The tab button beside D2RLoader's BROWSE GAMES: a fixed layout.
