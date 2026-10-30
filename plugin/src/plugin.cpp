@@ -50,7 +50,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.9.2",
+	.version     = "0.9.3",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -1194,9 +1194,16 @@ D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContex
 	const std::string target = event->target ? event->target : "";
 	const std::string command = event->command ? event->command : "";
 	const std::string text = event->text ? event->text : "";
-	// Every message is logged while the plugin is young: it is how the
-	// front-end screens' own messages are learned.
-	Log("ui: %s:%s:%s", target.c_str(), command.c_str(), text.c_str());
+	// Only the messages this plugin acts on are logged: every UI message (60 a
+	// second in a game, about 1 ms a line) filled 1.25 MB in minutes.
+	// D2R_ROOMS_LOG_UI=1 logs them all again.
+	static const bool logAll = [] {
+		char v[8] {};
+		return GetEnvironmentVariableA("D2R_ROOMS_LOG_UI", v, sizeof(v)) > 0 && v[0] == '1';
+	}();
+	if (logAll || target == kLoaderMessage || target == "FrontEndNavigation" ||
+	    (target == "PanelManager" && (text.rfind("d2r-rooms/", 0) == 0 || text == kLoaderPanel || command == "UnloadAll")))
+		Log("ui: %s:%s:%s", target.c_str(), command.c_str(), text.c_str());
 
 	if (target == kMessageTarget) {
 		// The same press may already have been taken by HandleClick.
