@@ -50,7 +50,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.9.0",
+	.version     = "0.9.1",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -567,6 +567,14 @@ bool ClickLoaderWidget(const char* container, const char* name) {
 	RECT client {};
 	if (!hwnd || !GetClientRect(hwnd, &client) || client.right <= 0 || client.bottom <= 0) return false;
 	const double scale = std::min(client.right / 3840.0, client.bottom / 2160.0);
+	// D2RLoader reports its Direct Join box (DirectJoinContainer) at 0,0, while
+	// the fields' rects are from the box's corner. Measured in the game: the
+	// player's click on its Join Game at -209,1181 and that button at 355,444 in
+	// the box put the corner at -564,737 (the box is centred, 1128 wide).
+	if (rc.x == 0 && rc.y == 0 && std::string_view(container) == "DirectJoinContainer") {
+		rc.x = -564;
+		rc.y = 737;
+	}
 	const int x = rc.x + rw.x + rw.width / 2, y = rc.y + rw.y + rw.height / 2;
 	POINT p {static_cast<LONG>(client.right / 2.0 + x * scale), static_cast<LONG>(y * scale)};
 	Log("click: %s %d,%d %dx%d in %s %d,%d -> %d,%d px", name, rw.x, rw.y, rw.width, rw.height, container, rc.x, rc.y, p.x, p.y);
