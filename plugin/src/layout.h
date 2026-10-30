@@ -44,4 +44,14 @@ std::string PanelLayout(const PanelView& view);
 // The D2R Rooms tab button, beside BROWSE GAMES in D2RLoader's window.
 std::string TabLayout();
 
+// A button of the tab or its list, in layout units (2160 high) from the top
+// middle of the screen. D2RLoader's window is modal and takes the mouse, so
+// the plugin hit-tests the cursor against these on a click.
+struct HitArea {
+	int x, y, width, height;
+	std::string command, argument;  // as the button's own message: "Join", "3"
+};
+// The tab button and, when view.tab, the list's buttons.
+std::vector<HitArea> TabHitAreas(const PanelView& view);
+
 }  // namespace rooms

@@ -209,6 +209,19 @@ void TestLayout() {
 	// The tab button is a panel of its own, named as the plugin registers it.
 	const auto tab = json::Parse(TabLayout());
 	CHECK(tab && (*tab)["name"].asString() == kTabPanelName && (*tab)["children"][0]["name"].asString() == "Tab");
+
+	// Clicks are matched by the plugin: the tab, then each row's Join and Refresh.
+	view.tab = false;
+	CHECK(TabHitAreas(view).size() == 1 && TabHitAreas(view)[0].command == "Tab");
+	view.tab = true;
+	view.page = 0;
+	size_t joinAreas = 0;
+	bool refreshArea = false;
+	for (const HitArea& a : TabHitAreas(view)) {
+		joinAreas += a.command == "Join";
+		refreshArea |= a.command == "Refresh";
+	}
+	CHECK(joinAreas == std::min<size_t>(view.rooms.size(), kRowsPerPage) && refreshArea);
 }
 
 void TestRelay() {

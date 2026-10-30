@@ -49,7 +49,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.4.0",
+	.version     = "0.4.1",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -285,7 +285,16 @@ std::string RelaysLine() {  // under g_mu
 	return line;
 }
 
+PanelView CurrentView();
+void ApplyLayoutText(const PanelView& view, const std::string& layout);
+
 void ApplyLayout() {
+	const PanelView view = CurrentView();
+	const std::string layout = PanelLayout(view);
+	ApplyLayoutText(view, layout);
+}
+
+PanelView CurrentView() {
 	PanelView view;
 	{
 		std::lock_guard lock(g_mu);
@@ -303,8 +312,10 @@ void ApplyLayout() {
 			view.hostingText = "You host room [" + g_hosted->code + "]. Players connect to " + g_hosted->address +
 				". Pick your character and start the game; the room closes when you leave it.";
 	}
-	const std::string layout = PanelLayout(view);
+	return view;
+}
 
+void ApplyLayoutText(const PanelView& view, const std::string& layout) {
 	const bool reopen = g_panelOpen;
 	if (reopen) g_panels->closePanel(g_ctx, g_panel);
 	if (g_layout != D2RL::Resources::InvalidHandle) g_resources->unregisterResource(g_ctx, g_layout);
@@ -929,6 +940,31 @@ void HandleOwn(const std::string& command, const std::string& text) {
 	}
 }
 
+// D2RLoader's Multiplayer window is modal: a click on the tab or the list
+// never reaches their buttons. So a click is matched here against where they
+// are drawn. Layout units are 2160 high, from the top middle of the window.
+std::string g_lastClickCommand;
+std::chrono::steady_clock::time_point g_lastClickAt;
+
+void HandleClick() {
+	HWND hwnd = GameWindow();
+	POINT p {};
+	RECT rc {};
+	if (!hwnd || !GetCursorPos(&p) || !ScreenToClient(hwnd, &p) || !GetClientRect(hwnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
+	const double scale = std::min(rc.right / 3840.0, rc.bottom / 2160.0);
+	const int x = static_cast<int>((p.x - rc.right / 2.0) / scale);
+	const int y = static_cast<int>(p.y / scale);
+	for (const HitArea& a : TabHitAreas(CurrentView())) {
+		if (x < a.x || x >= a.x + a.width || y < a.y || y >= a.y + a.height) continue;
+		Log("click: %d,%d -> %s %s", x, y, a.command.c_str(), a.argument.c_str());
+		g_lastClickCommand = a.command;
+		g_lastClickAt = std::chrono::steady_clock::now();
+		HandleOwn(a.command, a.argument);
+		return;
+	}
+	Log("click: %d,%d (window %ldx%ld)", x, y, rc.right, rc.bottom);
+}
+
 D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContext*, const D2RL::SharedEvents::UiMessageEvent* event, void*) noexcept {
 	const std::string target = event->target ? event->target : "";
 	const std::string command = event->command ? event->command : "";
@@ -938,11 +974,19 @@ D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContex
 	Log("ui: %s:%s:%s", target.c_str(), command.c_str(), text.c_str());
 
 	if (target == kMessageTarget) {
+		// The same press may already have been taken by HandleClick.
+		const bool clicked = command == g_lastClickCommand && std::chrono::steady_clock::now() - g_lastClickAt < std::chrono::milliseconds(500);
 		try {
-			HandleOwn(command, text);
+			if (!clicked) HandleOwn(command, text);
 		} catch (...) {
 		}
 		return D2RL::SharedEvents::UiMessageAction::Consume;
+	}
+	if (target == "InputMessage" && command == "LeftMouseButtonUp" && g_tabButtonOpen) {
+		try {
+			HandleClick();
+		} catch (...) {
+		}
 	}
 	if (target == "PanelManager" && text == kLoaderPanel) {
 		if (command == "OpenPanel" || command == "OpenExclusivePanel") {
