@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "board.h"
+#include "json.h"
 #include "layout.h"
 #include "relay_config.h"
 #include "relay_net.h"
@@ -49,7 +50,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.8.1",
+	.version     = "0.8.2",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -1157,6 +1158,56 @@ std::string Args(const D2RL::ConsoleCommandContext* command) {
 	return command && command->args ? std::string(command->args, command->argsLength) : std::string();
 }
 
+// rooms-art [<image> [<width> <height>]]: shows that image in a panel of that
+// size (default the TCP/IP screen's art at 1730 x 1300), centred where the D2R
+// Rooms window goes, both as a GridImageWidget and an ImageWidget with that
+// rect, to see whether the game stretches it. "rooms-art off" hides it.
+D2RL::ConsoleCommandResult __cdecl CmdArt(D2R::Game::Client*, const D2RL::ConsoleCommandContext* command, void*) noexcept {
+	std::istringstream in(Args(command));
+	std::string image = "PANEL\\TCP_IP\\TCP_IP_PanelBG";
+	int width = 1730, height = 1300;
+	std::string first;
+	if (in >> first) {
+		if (first == "off") {
+			OnUi([] { ShowPanel(false); });
+			return D2RL::ConsoleCommandResult::Handled;
+		}
+		image = first;
+		in >> width >> height;
+	}
+	OnUi([image, width, height] {
+		g_tabActive = false;
+		if (g_panelOpen && g_slot >= 0) g_panels->closePanel(g_ctx, g_pool[g_slot]);
+		g_panelOpen = true;
+		const int gen = ++g_layoutGen;
+		const int slot = g_nextSlot++ % g_poolSize;
+		g_slot = slot;
+		const std::string file = json::Quote(image);
+		const std::string rect = "{\"x\":0,\"y\":0,\"width\":" + std::to_string(width) + ",\"height\":" + std::to_string(height) + "}";
+		const std::string layout = "{\"type\":\"Panel\",\"name\":" + json::Quote(PanelName(slot)) + ",\"fields\":{\"anchor\":{\"x\":0.5,\"y\":0.1},\"rect\":{\"x\":" +
+			std::to_string(-width / 2) + ",\"y\":0,\"width\":" + std::to_string(width) + ",\"height\":" + std::to_string(height) +
+			"},\"priority\":2100000000},\"children\":["
+			"{\"type\":\"GridImageWidget\",\"name\":\"Grid\",\"fields\":{\"rect\":" + rect + ",\"filename\":" + file + "}},"
+			"{\"type\":\"TextBoxWidget\",\"name\":\"Title" + std::to_string(gen) + "\",\"fields\":{\"rect\":{\"x\":0,\"y\":120,\"width\":" +
+			std::to_string(width) + ",\"height\":80},\"text\":" + json::Quote("art probe: " + image + " " + std::to_string(width) + " x " + std::to_string(height)) +
+			",\"style\":{\"fontColor\":\"$FontColorLightGold\",\"pointSize\":\"$MediumFontSize\",\"alignment\":{\"h\":\"center\",\"v\":\"center\"}}}}]}";
+		if (g_poolLayout[slot] != D2RL::Resources::InvalidHandle) g_resources->unregisterResource(g_ctx, g_poolLayout[slot]);
+		g_poolLayout[slot] = D2RL::Resources::InvalidHandle;
+		const std::string path = PanelPath(slot);
+		const D2RL::Resources::ResourceRegistration resource {
+			.structSize = D2RL::Resources::ResourceRegistrationSize,
+			.flags      = 0,
+			.path       = path.c_str(),
+			.bytes      = layout.data(),
+			.byteCount  = layout.size(),
+		};
+		g_resources->registerResource(g_ctx, &resource, &g_poolLayout[slot]);
+		Log("art: %s %d x %d in panel %d", image.c_str(), width, height, slot);
+		OpenLater(gen, 1);
+	});
+	return D2RL::ConsoleCommandResult::Handled;
+}
+
 D2RL::ConsoleCommandResult __cdecl CmdRooms(D2R::Game::Client*, const D2RL::ConsoleCommandContext*, void*) noexcept {
 	OnUi([] {
 		const bool show = !g_panelOpen;
@@ -1349,7 +1400,8 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	const bool commands = context->RegisterConsoleCommand("rooms", CmdRooms, "Show or hide the D2R Rooms list.")
 		&& context->RegisterConsoleCommand("rooms-ui", CmdUi, "rooms-ui <panel> [<child>...]: log a widget's rect and input text.")
 		&& context->RegisterConsoleCommand("rooms-msg", CmdMsg, "rooms-msg <target> <command> [<text>]: send a UI message.")
-		&& context->RegisterConsoleCommand("rooms-type", CmdType, "rooms-type <text>: type text into the focused box.");
+		&& context->RegisterConsoleCommand("rooms-type", CmdType, "rooms-type <text>: type text into the focused box.")
+		&& context->RegisterConsoleCommand("rooms-art", CmdArt, "rooms-art [<image> [<width> <height>]] | off: show an image stretched to a size.");
 	if (!commands) D2RL::LogWarn(context, "d2r-rooms: a console command did not register");
 	return true;
 }
