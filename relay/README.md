@@ -35,6 +35,18 @@ plugin/build/Release/relay_e2e.exe ws://127.0.0.1:8080   # python relay/python/r
 plugin/build/Release/relay_e2e.exe ws://127.0.0.1:8787   # wrangler dev
 ```
 
+And a measurement: two joiners on 127.0.0.1 send game-sized packets at a steady rate, the host's fake game echoes
+them, and it prints the round trips, the bytes/s and messages/s, and one 768 KB burst:
+
+```
+plugin/build/Release/relay_e2e.exe ws://127.0.0.1:8787 --bench 30 25 120   # seconds, packets/s, bytes
+```
+
+On one PC (2026-10-30, 2 joiners × 25 packets/s × 120 B): Python relay round trip 0.4 ms median, 0.5 ms at the 95th
+percentile; `wrangler dev` 3.8 ms median, 5.9 ms at the 95th percentile, 13 ms worst; nothing lost; a burst of
+6.4 MB/s each way through `wrangler dev`. Each joiner was 3.0 KB/s and 25 messages/s each way, and the host 50
+messages/s up. What a real D2R game sends is still to be measured: the plugin logs it (plugin/README.md).
+
 ## Deploy
 
 Never on a push: a deploy restarts the room objects and drops relayed games. By hand, `npx wrangler deploy` in

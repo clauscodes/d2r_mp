@@ -6,6 +6,13 @@
 // The "host game" is an echo server on loopback; two "joiner games" connect to
 // their JoinRelay listeners, send bytes and must get the same bytes back
 // through relay -> HostRelay -> echo -> HostRelay -> relay. No D2R needed.
+//
+//   relay_e2e.exe <url> --bench [seconds] [packets/s] [bytes]   (30 25 120)
+//
+// measures instead: two joiners on 127.0.0.1 each send game-sized packets at
+// a steady rate for `seconds`, the host's game echoes them, and it prints the
+// round trips and the bytes/s and messages/s the plugin's counters saw; then
+// one 768 KB burst for the most one pipe carries.
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -13,8 +20,13 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -95,6 +107,11 @@ SOCKET Dial(const std::string& ip, int port) {
 	return s;
 }
 
+void NoDelay(SOCKET s) {
+	BOOL on = TRUE;
+	setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&on), sizeof(on));
+}
+
 // Sends `data` and reads the same number of bytes back.
 bool RoundTrip(SOCKET s, const std::string& data) {
 	std::thread writer([&] { send(s, data.data(), static_cast<int>(data.size()), 0); });
@@ -118,6 +135,115 @@ bool WaitFor(Fn fn, int ms) {
 	return fn();
 }
 
+using Clock = std::chrono::steady_clock;
+
+// One joiner's game for the bench: `pps` packets of `size` bytes a second,
+// each stamped with its send time; the echo's arrival gives the round trip.
+struct BenchGame {
+	std::vector<double> rttMs;
+	int sent = 0;
+
+	void Run(SOCKET s, int seconds, int pps, int size) {
+		const int total = seconds * pps;
+		std::thread reader([&] {
+			std::string packet(static_cast<size_t>(size), '\0');
+			for (int got = 0; got < total; ++got) {
+				size_t have = 0;
+				while (have < packet.size()) {
+					const int n = recv(s, packet.data() + have, static_cast<int>(packet.size() - have), 0);
+					if (n <= 0) return;
+					have += static_cast<size_t>(n);
+				}
+				Clock::rep stamp = 0;
+				std::memcpy(&stamp, packet.data(), sizeof(stamp));
+				const Clock::duration rtt = Clock::now().time_since_epoch() - Clock::duration(stamp);
+				rttMs.push_back(std::chrono::duration<double, std::milli>(rtt).count());
+			}
+		});
+		const auto start = Clock::now();
+		std::string packet(static_cast<size_t>(size), 'g');
+		for (int i = 0; i < total; ++i) {
+			std::this_thread::sleep_until(start + std::chrono::microseconds(1'000'000LL * i / pps));
+			const Clock::rep now = Clock::now().time_since_epoch().count();
+			std::memcpy(packet.data(), &now, sizeof(now));
+			if (send(s, packet.data(), size, 0) != size) break;
+			++sent;
+		}
+		reader.join();
+	}
+
+	std::string Summary() {
+		if (rttMs.empty()) return "no echoes";
+		std::sort(rttMs.begin(), rttMs.end());
+		auto at = [&](double q) { return rttMs[std::min(rttMs.size() - 1, static_cast<size_t>(q * rttMs.size()))]; };
+		char buf[160];
+		std::snprintf(buf, sizeof(buf), "%zu/%d echoed, round trip ms: median %.1f, 95%% %.1f, max %.1f", rttMs.size(), sent, at(0.5),
+		              at(0.95), rttMs.back());
+		return buf;
+	}
+};
+
+int Bench(const std::string& url, int seconds, int pps, int size) {
+	auto log = [](const std::string& line) { std::printf("     %s\n", line.c_str()); };
+	std::printf("bench %s: 2 joiners x %d packets/s x %d B for %d s\n", url.c_str(), pps, size, seconds);
+	const int hostPort = FreePort();
+	Echo echo(hostPort);
+	net::HostRelay host({.relay = {"bench", url, ""}, .gamePort = hostPort, .log = log, .lost = nullptr});
+	std::string error;
+	if (!host.Start(&error)) {
+		std::printf("FAIL the host claims a room: %s\n", error.c_str());
+		return 1;
+	}
+	std::vector<std::unique_ptr<net::JoinRelay>> joins;
+	std::vector<SOCKET> games;
+	for (int i = 0; i < 2; ++i) {
+		const int port = FreePort();
+		auto j = std::make_unique<net::JoinRelay>(
+		    net::JoinRelay::Options {.relay = host.Ref(), .gamePort = port, .acceptTimeoutMs = 10000, .log = log, .ended = nullptr});
+		std::string address;
+		if (!j->Start(&address, &error)) {
+			std::printf("FAIL joiner %d opens its pipe: %s\n", i + 1, error.c_str());
+			return 1;
+		}
+		const SOCKET g = Dial(address, port);
+		if (g == INVALID_SOCKET) {
+			std::printf("FAIL game %d connects to %s:%d\n", i + 1, address.c_str(), port);
+			return 1;
+		}
+		NoDelay(g);
+		games.push_back(g);
+		joins.push_back(std::move(j));
+	}
+
+	BenchGame bench[2];
+	std::thread t0([&] { bench[0].Run(games[0], seconds, pps, size); });
+	std::thread t1([&] { bench[1].Run(games[1], seconds, pps, size); });
+	t0.join();
+	t1.join();
+	for (int i = 0; i < 2; ++i) {
+		std::printf("joiner %d: %s\n", i + 1, bench[i].Summary().c_str());
+		std::printf("joiner %d counters, %s\n", i + 1, joins[i]->Traffic().Total().c_str());
+	}
+	std::printf("host counters, %s\n", host.Traffic().Total().c_str());
+
+	// The most one pipe carries: a burst under the relay's 1 MiB allowance.
+	std::string burst(768 * 1024, '\0');
+	for (size_t i = 0; i < burst.size(); ++i) burst[i] = static_cast<char>((i * 131 + 3) & 0xff);
+	const auto start = Clock::now();
+	const bool intact = RoundTrip(games[0], burst);
+	const double secs = std::chrono::duration<double>(Clock::now() - start).count();
+	std::printf("burst: 768 KB there and back %s in %.0f ms = %.1f MB/s each way\n", intact ? "intact" : "BROKEN", secs * 1000,
+	            0.75 / secs);
+
+	for (SOCKET g : games) closesocket(g);
+	for (auto& j : joins) j->Stop();
+	host.Stop();
+	bool all = intact && bench[0].sent == seconds * pps && bench[1].sent == seconds * pps;
+	for (auto& b : bench) all = all && b.rttMs.size() == static_cast<size_t>(b.sent);
+	std::printf("%s\n", all ? "bench done" : "BENCH LOST BYTES");
+	return all ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -127,6 +253,9 @@ int main(int argc, char** argv) {
 	}
 	const std::string url = argv[1];
 	net::StartNetworking();
+	if (argc >= 3 && std::string(argv[2]) == "--bench")
+		return Bench(url, argc > 3 ? std::atoi(argv[3]) : 30, argc > 4 ? std::atoi(argv[4]) : 25,
+		             argc > 5 ? std::max(8, std::atoi(argv[5])) : 120);
 	auto log = [](const std::string& line) { std::printf("     %s\n", line.c_str()); };
 
 	const RelayHealth health = net::CheckRelay(url);

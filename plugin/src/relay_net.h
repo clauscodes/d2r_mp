@@ -8,6 +8,8 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -36,6 +38,29 @@ RelayServer PickRelay(const std::vector<RelayServer>& relays, std::vector<RelayH
 
 class WebSocket;
 
+// Game bytes and WebSocket messages through one relay socket, for the log:
+// what a game sends decides the relay's bill (each message into the relay
+// counts as 1/20 request on Cloudflare). "up" is towards the relay.
+class Traffic {
+public:
+	Traffic();
+	void Up(size_t bytes);
+	void Down(size_t bytes);
+	uint64_t UpBytes() const { return upBytes_; }
+	uint64_t DownBytes() const { return downBytes_; }
+	// "up 2345 B/s 25.0 msg/s, down ..." since the previous call; empty when
+	// nothing moved. One caller only.
+	std::string SinceLast();
+	// "312 s: up 731 KB (2345 B/s 25.0 msg/s), down ..." since the socket opened.
+	std::string Total() const;
+
+private:
+	using Clock = std::chrono::steady_clock;
+	std::atomic<uint64_t> upBytes_ {0}, upMsgs_ {0}, downBytes_ {0}, downMsgs_ {0};
+	Clock::time_point start_, last_;
+	uint64_t lastUpBytes_ = 0, lastUpMsgs_ = 0, lastDownBytes_ = 0, lastDownMsgs_ = 0;
+};
+
 // The host's side: one socket to the relay; each OPEN from it becomes a TCP
 // connection to the game at 127.0.0.1:gamePort.
 class HostRelay {
@@ -60,6 +85,8 @@ public:
 	// What joiners need, through the board.
 	RelayRef Ref() const { return {opt_.relay.url, room_, joinKey_}; }
 	int Pipes() const;
+	// All pipes together.
+	const net::Traffic& Traffic() const { return traffic_; }
 
 private:
 	struct Pipe;
@@ -67,12 +94,15 @@ private:
 	void PipeThread(std::shared_ptr<Pipe> pipe);
 	void Send(const std::string& frame);
 	void ClosePipe(uint8_t n, bool tellRelay);
+	void LogTotal();
 
 	Options opt_;
 	std::string room_, secret_, joinKey_;
 	std::unique_ptr<WebSocket> ws_;
 	std::thread reader_, pinger_;
 	std::atomic<bool> stop_ {false};
+	std::atomic<bool> totalLogged_ {false};
+	net::Traffic traffic_;
 	mutable std::mutex mu_;
 	std::vector<std::shared_ptr<Pipe>> pipes_;
 	std::vector<std::thread> threads_;
@@ -102,10 +132,12 @@ public:
 	bool Start(std::string* address, std::string* error);
 	void Stop();
 	bool Connected() const { return connected_; }
+	const net::Traffic& Traffic() const { return traffic_; }
 
 private:
 	void Run();
 	Options opt_;
+	net::Traffic traffic_;
 	std::unique_ptr<WebSocket> ws_;
 	uintptr_t listener_ = ~uintptr_t(0);
 	uintptr_t game_ = ~uintptr_t(0);

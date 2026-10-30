@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 
 #include "json.h"
 
@@ -18,6 +19,7 @@ namespace rooms::net {
 namespace {
 
 constexpr int kPingEveryMs = 20'000;
+constexpr int kTrafficLogEvery = 3;  // pings: a traffic line a minute
 constexpr const char* kPing = "{\"t\":\"ping\"}";
 
 std::wstring Wide(const std::string& s) {
@@ -264,6 +266,57 @@ RelayServer PickRelay(const std::vector<RelayServer>& relays, std::vector<RelayH
 	return picked;
 }
 
+// --- traffic ----------------------------------------------------------------------
+
+namespace {
+
+std::string Rate(uint64_t bytes, uint64_t msgs, double seconds) {
+	char buf[64];
+	std::snprintf(buf, sizeof(buf), "%.0f B/s %.1f msg/s", bytes / seconds, msgs / seconds);
+	return buf;
+}
+
+std::string Amount(uint64_t bytes) {
+	char buf[32];
+	if (bytes < 10 * 1024) std::snprintf(buf, sizeof(buf), "%llu B", static_cast<unsigned long long>(bytes));
+	else if (bytes < 10 * 1024 * 1024) std::snprintf(buf, sizeof(buf), "%.0f KB", bytes / 1024.0);
+	else std::snprintf(buf, sizeof(buf), "%.1f MB", bytes / (1024.0 * 1024.0));
+	return buf;
+}
+
+}  // namespace
+
+Traffic::Traffic() : start_(Clock::now()), last_(start_) {}
+
+void Traffic::Up(size_t bytes) {
+	upBytes_ += bytes;
+	++upMsgs_;
+}
+
+void Traffic::Down(size_t bytes) {
+	downBytes_ += bytes;
+	++downMsgs_;
+}
+
+std::string Traffic::SinceLast() {
+	const auto now = Clock::now();
+	const double seconds = std::max(0.001, std::chrono::duration<double>(now - last_).count());
+	const uint64_t ub = upBytes_, um = upMsgs_, db = downBytes_, dm = downMsgs_;
+	std::string line;
+	if (um != lastUpMsgs_ || dm != lastDownMsgs_)
+		line = "up " + Rate(ub - lastUpBytes_, um - lastUpMsgs_, seconds) + ", down " + Rate(db - lastDownBytes_, dm - lastDownMsgs_, seconds);
+	last_ = now;
+	lastUpBytes_ = ub, lastUpMsgs_ = um, lastDownBytes_ = db, lastDownMsgs_ = dm;
+	return line;
+}
+
+std::string Traffic::Total() const {
+	const double seconds = std::max(0.001, std::chrono::duration<double>(Clock::now() - start_).count());
+	const uint64_t ub = upBytes_, um = upMsgs_, db = downBytes_, dm = downMsgs_;
+	return std::to_string(static_cast<long long>(seconds)) + " s: up " + Amount(ub) + " (" + Rate(ub, um, seconds) + "), down " +
+	       Amount(db) + " (" + Rate(db, dm, seconds) + ")";
+}
+
 // --- host -------------------------------------------------------------------------
 
 struct HostRelay::Pipe {
@@ -298,12 +351,19 @@ bool HostRelay::Start(std::string* error) {
 	stop_ = false;
 	reader_ = std::thread([this] { ReadLoop(); });
 	pinger_ = std::thread([this] {
-		while (!stop_) {
+		for (int pings = 1; !stop_; ++pings) {
 			Nap(stop_, kPingEveryMs);
 			if (!stop_ && ws_) ws_->Send(kPing, true);
+			if (pings % kTrafficLogEvery != 0) continue;
+			const std::string line = traffic_.SinceLast();
+			if (!stop_ && !line.empty()) Log(opt_.log, "relay host: traffic " + line);
 		}
 	});
 	return true;
+}
+
+void HostRelay::LogTotal() {
+	if (!totalLogged_.exchange(true)) Log(opt_.log, "relay host: traffic in all, " + traffic_.Total());
 }
 
 void HostRelay::Stop() {
@@ -324,6 +384,7 @@ void HostRelay::Stop() {
 	for (auto& t : threads_)
 		if (t.joinable()) t.join();
 	threads_.clear();
+	if (ws_) LogTotal();
 	ws_.reset();
 }
 
@@ -391,6 +452,7 @@ void HostRelay::PipeThread(std::shared_ptr<Pipe> pipe) {
 		const int n = recv(s, buf, sizeof(buf), 0);
 		if (n <= 0) break;
 		Send(Frame(kFrameData, pipe->n, std::string_view(buf, static_cast<size_t>(n))));
+		traffic_.Up(static_cast<size_t>(n));
 	}
 	// The game ended this connection (or the relay closed the pipe first:
 	// then it is no longer listed and nothing is sent).
@@ -428,6 +490,7 @@ void HostRelay::ReadLoop() {
 					if (p->n == n) pipe = p;
 			}
 			if (!pipe) continue;
+			traffic_.Down(msg.size() - 2);
 			std::lock_guard lock(pipe->mu);
 			if (pipe->closed) continue;
 			if (pipe->connected) SendAll(static_cast<SOCKET>(pipe->socket), msg.data() + 2, msg.size() - 2);
@@ -444,6 +507,7 @@ void HostRelay::ReadLoop() {
 		for (auto& p : pipes_) open.push_back(p->n);
 	}
 	for (const uint8_t n : open) ClosePipe(n, false);
+	LogTotal();
 	if (opt_.lost) opt_.lost();
 }
 
@@ -493,9 +557,12 @@ bool JoinRelay::Start(std::string* address, std::string* error) {
 	stop_ = false;
 	runner_ = std::thread([this] { Run(); });
 	pinger_ = std::thread([this] {
-		while (!stop_) {
+		for (int pings = 1; !stop_; ++pings) {
 			Nap(stop_, kPingEveryMs);
 			if (!stop_ && ws_) ws_->Send(kPing, true);
+			if (pings % kTrafficLogEvery != 0) continue;
+			const std::string line = traffic_.SinceLast();
+			if (!stop_ && !line.empty()) Log(opt_.log, "relay join: traffic " + line);
 		}
 	});
 	return true;
@@ -525,6 +592,7 @@ void JoinRelay::Run() {
 			for (;;) {
 				const int n = recv(game, buf, sizeof(buf), 0);
 				if (n <= 0 || !ws_->Send(buf, static_cast<size_t>(n), false)) break;
+				traffic_.Up(static_cast<size_t>(n));
 			}
 			ws_->Close(1000, "game closed");
 		});
@@ -532,7 +600,9 @@ void JoinRelay::Run() {
 		for (;;) {
 			const auto kind = ws_->Receive(&msg);
 			if (kind == WebSocket::Kind::Closed) break;
-			if (kind == WebSocket::Kind::Binary && !SendAll(game, msg.data(), msg.size())) break;
+			if (kind != WebSocket::Kind::Binary) continue;
+			traffic_.Down(msg.size());
+			if (!SendAll(game, msg.data(), msg.size())) break;
 		}
 		why = ws_->CloseReason().empty() ? "relay closed" : ws_->CloseReason();
 		CloseSocket(game_);
@@ -541,6 +611,7 @@ void JoinRelay::Run() {
 	}
 	connected_ = false;
 	Log(opt_.log, "relay join: " + why);
+	if (traffic_.UpBytes() || traffic_.DownBytes()) Log(opt_.log, "relay join: traffic in all, " + traffic_.Total());
 	if (!stop_ && opt_.ended) opt_.ended(why);
 }
 

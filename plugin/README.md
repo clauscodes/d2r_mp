@@ -49,6 +49,10 @@ UPnP / PCP / NAT-PMP could not open the router), the room goes through a relay
   minute).
 - `game_port` is read from `d2rloader/config/d2rloader.toml` before each host or
   join.
+- **Traffic:** while a relay carries a game, `d2r-rooms.log` gets a line a
+  minute and one at the end, with game bytes/s and WebSocket messages/s each
+  way (`relay join: traffic up 2345 B/s 25.0 msg/s, down ...`; the host's
+  covers all its joiners). Messages into the relay are what Cloudflare bills.
 
 All network work runs on the plugin's own threads (WinHTTP WebSockets,
 Winsock), never on the UI or game thread.

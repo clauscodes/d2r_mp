@@ -628,7 +628,9 @@ void StartHostRelay(int session, int attempt) {
 		old.swap(g_hostRelay);
 		g_hostRelay = host;
 		g_hostRelayName = relay.name;
-		g_status = "Your port cannot be reached from outside: friends join through relay " + relay.name + ".";
+		g_status = g_relayCfg.mode == RelayMode::Always
+		               ? "Friends join through relay " + relay.name + " (mode = always)."
+		               : "Your port cannot be reached from outside: friends join through relay " + relay.name + ".";
 	}
 	if (old) std::thread([old] { old->Stop(); }).detach();
 	SendRelayToBoard(*hosted, RelayRefJson(host->Ref()));
