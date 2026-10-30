@@ -83,7 +83,7 @@ JSON, every answer carries `"v": 1`; errors are `{v, error, detail?}`.
 | `GET /api/rooms?mod=&difficulty=` | `{rooms: [view]}` — public live rooms; never addresses or tokens |
 | `GET /api/rooms/by-code/{code}` | `{room: view}` — public or not; any letter case |
 | `POST /api/rooms` | `{name, mod:{id,version}, difficulty?, mode?, act?, max_players?, public?, password?, address?, port?, player?}` → `{room_id, code, host_token, address, port, address_ipv6, heartbeat_every, ttl}` |
-| `POST /api/rooms/{id}/heartbeat` | `Authorization: Bearer <host_token>`; `{players?, difficulty?, mode?, act?, vr?}` → `{ok, heartbeat_every}`; 404 when the room expired (create it again) |
+| `POST /api/rooms/{id}/heartbeat` | `Authorization: Bearer <host_token>`; `{players?, players_count?, difficulty?, mode?, act?, vr?}` (`players_count` 1..8: the host's own count, it wins when higher than the roster's) → `{ok, heartbeat_every}`; 404 when the room expired (create it again) |
 | `DELETE /api/rooms/{id}` | `Authorization: Bearer <host_token>` |
 | `POST /api/join` | `{room_id \| code, password?, mod?, player?}` → `{room_id, address, port, address_ipv6, mod_mismatch}` |
 

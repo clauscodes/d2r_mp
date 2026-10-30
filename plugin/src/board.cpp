@@ -185,9 +185,10 @@ std::string JoinBody(std::string_view roomId, std::string_view password, const M
 	return body + "}";
 }
 
-std::string HeartbeatBody(int act, int level, std::string_view relayJson) {
+std::string HeartbeatBody(int act, int level, std::string_view relayJson, int players) {
 	std::string body = "{\"v\":1";
 	if (act >= 1 && act <= 5) body += ",\"act\":" + std::to_string(act);
+	if (players >= 1 && players <= 8) body += ",\"players_count\":" + std::to_string(players);
 	(void)level;  // the host's own row needs a name the plugin cannot read yet
 	if (!relayJson.empty()) body += ",\"relay\":" + std::string(relayJson);
 	return body + "}";

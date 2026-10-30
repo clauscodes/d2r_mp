@@ -180,6 +180,18 @@ describe("players", () => {
     expect(view).toMatchObject({ players_count: 3, act: 5 });
   });
 
+  it("takes the host's own player count", async () => {
+    const room = await create();
+    expect((await list())[0].players_count).toBe(1);
+    expect((await heartbeat(room, { players_count: 2 })).status).toBe(200);
+    expect((await list())[0]).toMatchObject({ players_count: 2, players: [] });
+    expect((await heartbeat(room, {})).status).toBe(200); // a heartbeat without it keeps it
+    expect((await list())[0].players_count).toBe(2);
+    expect((await heartbeat(room, { players_count: 1 })).status).toBe(200); // the joiner left
+    expect((await list())[0].players_count).toBe(1);
+    expect((await heartbeat(room, { players_count: 9 })).status).toBe(422);
+  });
+
   it("keeps only one joiner entry per name", async () => {
     const room = await create();
     for (let i = 0; i < 3; i++) await join({ room_id: room.room_id, player: { name: "Bob", class: "sorceress", level: 80 + i } });

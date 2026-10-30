@@ -83,7 +83,8 @@ std::string CreateBody(std::string_view name, const Mod& mod, std::string_view p
 std::string JoinBody(std::string_view roomId, std::string_view password, const Mod& mod);
 // relayJson: "" leaves the room's relay as it is, "null" clears it, or RelayRefJson().
 std::string CreateBody(std::string_view name, const Mod& mod, std::string_view password, int act, std::string_view relayJson);
-std::string HeartbeatBody(int act, int level, std::string_view relayJson = {});
+// `players` 0 = not counted (the board keeps what it had).
+std::string HeartbeatBody(int act, int level, std::string_view relayJson = {}, int players = 0);
 
 // One line per room and one for its players, as shown in the list.
 std::string RoomLine(const Room& room);

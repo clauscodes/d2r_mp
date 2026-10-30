@@ -15,7 +15,10 @@
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
+#include <iphlpapi.h>
 
 #include <D2RLPlugin/api.h>
 
@@ -50,7 +53,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.9.5",
+	.version     = "0.9.6",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -998,10 +1001,50 @@ void JoinRoom(const Room& room, const std::string& password) {
 
 // --- hosting ------------------------------------------------------------
 
+// Players in the hosted game: the host and one TCP connection to its game
+// port per joiner, straight or through the relay (the relay's pipe connects
+// from 127.0.0.1). D2R gives a plugin no player list. Any thread.
+int CountPlayers() {
+	const DWORD pid = GetCurrentProcessId();
+	const u_short port = htons(static_cast<u_short>(GamePort()));
+	int joiners = 0;
+	std::vector<char> buf;
+	for (const ULONG family : {AF_INET, AF_INET6}) {
+		DWORD size = 0;
+		GetExtendedTcpTable(nullptr, &size, FALSE, family, TCP_TABLE_OWNER_PID_CONNECTIONS, 0);
+		buf.resize(size + 4096);
+		size = static_cast<DWORD>(buf.size());
+		if (GetExtendedTcpTable(buf.data(), &size, FALSE, family, TCP_TABLE_OWNER_PID_CONNECTIONS, 0) != NO_ERROR) continue;
+		if (family == AF_INET) {
+			const auto* t = reinterpret_cast<const MIB_TCPTABLE_OWNER_PID*>(buf.data());
+			for (DWORD i = 0; i < t->dwNumEntries; ++i) {
+				const auto& r = t->table[i];
+				if (r.dwOwningPid == pid && r.dwState == MIB_TCP_STATE_ESTAB && static_cast<u_short>(r.dwLocalPort) == port) ++joiners;
+			}
+		} else {
+			const auto* t = reinterpret_cast<const MIB_TCP6TABLE_OWNER_PID*>(buf.data());
+			for (DWORD i = 0; i < t->dwNumEntries; ++i) {
+				const auto& r = t->table[i];
+				if (r.dwOwningPid == pid && r.dwState == MIB_TCP_STATE_ESTAB && static_cast<u_short>(r.dwLocalPort) == port) ++joiners;
+			}
+		}
+	}
+	return std::min(1 + joiners, 8);
+}
+
 void HeartbeatLoop(Hosted hosted) {
+	// Every heartbeat_every seconds, and at once when the player count changes
+	// (checked every 2 s).
 	std::unique_lock lock(g_heartbeatMu);
-	while (!g_heartbeatCv.wait_for(lock, std::chrono::seconds(hosted.heartbeatEvery), [] { return g_heartbeatStop; })) {
-		Send(D2RL::Http::Method::Post, "/api/rooms/" + hosted.roomId + "/heartbeat", HeartbeatBody(g_act, g_level), hosted.token,
+	int sent = 1;  // the board starts at the host alone
+	auto last = std::chrono::steady_clock::now();
+	while (!g_heartbeatCv.wait_for(lock, std::chrono::seconds(2), [] { return g_heartbeatStop; })) {
+		const int players = CountPlayers();
+		if (players == sent && std::chrono::steady_clock::now() - last < std::chrono::seconds(hosted.heartbeatEvery)) continue;
+		if (players != sent) Log("host: %d player(s) in the game", players);
+		sent = players;
+		last = std::chrono::steady_clock::now();
+		Send(D2RL::Http::Method::Post, "/api/rooms/" + hosted.roomId + "/heartbeat", HeartbeatBody(g_act, g_level, {}, players), hosted.token,
 		     [](int status, const std::string&) {
 			     if (status != 404) return;
 			     Log("host: the board dropped the room");

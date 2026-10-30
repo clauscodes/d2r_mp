@@ -44,6 +44,8 @@ export interface CreateRoom {
 
 export interface Heartbeat {
   players: Player[] | null;
+  /** The host's own count of players in its game (it cannot read their names). */
+  players_count: number | null;
   /** undefined = unchanged, null = the host stopped using a relay. */
   relay: Relay | null | undefined;
   difficulty: string | null;
@@ -197,6 +199,7 @@ export function parseHeartbeat(body: unknown): Heartbeat {
   }
   return {
     players,
+    players_count: int(o.players_count, "players_count", 1, 8),
     relay: o.relay === undefined ? undefined : parseRelay(o.relay),
     difficulty: oneOf(o.difficulty, "difficulty", DIFFICULTIES),
     mode: oneOf(o.mode, "mode", MODES),

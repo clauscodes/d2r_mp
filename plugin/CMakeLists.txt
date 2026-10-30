@@ -23,7 +23,7 @@ add_library(d2r_rooms_net STATIC src/relay_net.cpp)
 target_link_libraries(d2r_rooms_net PUBLIC d2r_rooms_core winhttp ws2_32 bcrypt)
 
 add_library(d2r_rooms SHARED src/plugin.cpp src/d2r_rooms.rc)
-target_link_libraries(d2r_rooms PRIVATE d2r_rooms_core d2r_rooms_net D2RLPlugin user32)
+target_link_libraries(d2r_rooms PRIVATE d2r_rooms_core d2r_rooms_net D2RLPlugin user32 iphlpapi)
 # D2RLoader pairs d2rl-<plugin id>.dll with its id.
 set_target_properties(d2r_rooms PROPERTIES OUTPUT_NAME "d2rl-d2r-rooms")
 

@@ -242,6 +242,13 @@ void TestLayout() {
 	CHECK(TabHitAreas().size() == 1 && TabHitAreas()[0].command == "Tab");
 }
 
+void TestPlayerCount() {
+	CHECK(HeartbeatBody(1, 0).find("players_count") == std::string::npos);
+	const auto hb = json::Parse(HeartbeatBody(2, 0, {}, 3));
+	CHECK(hb && (*hb)["players_count"].asInt() == 3 && (*hb)["act"].asInt() == 2);
+	CHECK(HeartbeatBody(1, 0, {}, 9).find("players_count") == std::string::npos);
+}
+
 void TestRelay() {
 	// The relay list: ours alone without entries, the player's order, keys, bad lines skipped.
 	auto cfg = ParseRelayIni("");
@@ -379,6 +386,7 @@ int main(int argc, char** argv) {
 	TestDetectMod();
 	TestBoard();
 	TestLayout();
+	TestPlayerCount();
 	TestRelay();
 	std::printf("%d checks, %d failed\n", g_checks, g_failed);
 	return g_failed == 0 ? 0 : 1;

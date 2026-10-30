@@ -99,6 +99,8 @@ interface RoomData {
   joiners: Joiner[];
   // Handed out with the address, after the password; the list shows only its url.
   relay: Relay | null;
+  // The host's plugin counts the connections to its game: names unknown, the number right.
+  count: number | null;
 }
 
 interface RoomRow {
@@ -123,7 +125,7 @@ interface RoomRow {
 }
 
 function roomData(row: RoomRow): RoomData {
-  return { host_player: null, roster: [], vr: null, joiners: [], relay: null, ...JSON.parse(row.data) };
+  return { host_player: null, roster: [], vr: null, joiners: [], relay: null, count: null, ...JSON.parse(row.data) };
 }
 
 interface PlayerRow {
@@ -180,8 +182,9 @@ function view(row: RoomRow, t: number) {
     mode: row.mode,
     act: row.act,
     max_players: row.max_players,
-    // The host plays even when nothing named their character.
-    players_count: list.length + (list.some((p) => p.host) ? 0 : 1),
+    // The host plays even when nothing named their character; the host's own
+    // count wins when it is higher (joiners who named no character).
+    players_count: Math.max(list.length + (list.some((p) => p.host) ? 0 : 1), data.count ?? 0),
     locked: row.password_hash !== null,
     age: t - row.created_at,
     players: list,
@@ -231,7 +234,7 @@ export class Board {
 
     const address = req.address ?? ip;
     const token = randomToken();
-    const data: RoomData = { host_player: req.player, roster: [], vr: req.player?.vr ?? null, joiners: [], relay: req.relay };
+    const data: RoomData = { host_player: req.player, roster: [], vr: req.player?.vr ?? null, joiners: [], relay: req.relay, count: null };
     const password = req.password ? await hashPassword(req.password) : null;
     for (let attempt = 0; attempt < 20; attempt++) {
       const code = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
@@ -271,6 +274,7 @@ export class Board {
     const row = await this.owned(room_id, token);
     const data = roomData(row);
     if (hb.players) data.roster = hb.players;
+    if (hb.players_count !== null) data.count = hb.players_count;
     if (hb.vr !== null) data.vr = hb.vr;
     if (hb.relay !== undefined) data.relay = hb.relay;
     await this.db
