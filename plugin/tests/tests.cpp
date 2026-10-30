@@ -185,20 +185,30 @@ void TestLayout() {
 	}
 	CHECK(hostingShown && !formShown);
 
-	// Beside D2RLoader's Multiplayer window: its CREATE GAME hosts, so only the
-	// password field is left, and the panel sits at the left edge.
+	// As the tab of D2RLoader's Multiplayer window: its CREATE GAME hosts, so
+	// only the password field is left, with no frame, and no empty texts.
 	view.hosting = false;
-	view.loader = true;
+	view.tab = true;
+	view.rooms[0].players.clear();
 	layout = json::Parse(PanelLayout(view));
 	CHECK(layout.has_value());
-	bool passwordShown = false, createShown = false;
+	bool passwordShown = false, createShown = false, frameShown = false, emptyText = false;
 	for (size_t i = 0; i < (*layout)["children"].size(); ++i) {
-		const std::string name = (*layout)["children"][i]["name"].asString();
+		const json::Value& c = (*layout)["children"][i];
+		const std::string name = c["name"].asString();
 		passwordShown |= name == "RoomName";
 		createShown |= name == "Create";
+		frameShown |= name == "Background" || name == "Close";
+		emptyText |= c["type"].asString() == "TextBoxWidget" && c["fields"]["text"].asString().empty();
 	}
-	CHECK(passwordShown && !createShown);
-	CHECK((*layout)["fields"]["anchor"]["x"].asNumber() == 0);
+	CHECK(passwordShown);
+	CHECK(!createShown && !frameShown);
+	CHECK(!emptyText);
+	CHECK((*layout)["fields"]["anchor"]["y"].asNumber() == 0);
+
+	// The tab button is a panel of its own, named as the plugin registers it.
+	const auto tab = json::Parse(TabLayout());
+	CHECK(tab && (*tab)["name"].asString() == kTabPanelName && (*tab)["children"][0]["name"].asString() == "Tab");
 }
 
 void TestRelay() {

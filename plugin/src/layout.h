@@ -15,6 +15,9 @@ inline constexpr const char* kPluginId = "d2r-rooms";
 inline constexpr const char* kPanelLocalId = "RoomsPanel";
 inline constexpr const char* kPanelName = "d2r-rooms/RoomsPanel";
 inline constexpr const char* kPanelPath = "data/global/ui/layouts/d2r-rooms/RoomsPanelhd.json";
+inline constexpr const char* kTabPanelLocalId = "RoomsTab";
+inline constexpr const char* kTabPanelName = "d2r-rooms/RoomsTab";
+inline constexpr const char* kTabPanelPath = "data/global/ui/layouts/d2r-rooms/RoomsTabhd.json";
 // Target of the panel's own button messages ("D2RRooms:Join:3").
 inline constexpr const char* kMessageTarget = "D2RRooms";
 inline constexpr int kRowsPerPage = 6;
@@ -25,9 +28,9 @@ struct PanelView {
 	std::string status;       // one line under the title
 	bool hosting = false;
 	std::string hostingText;  // shown instead of the create form while hosting
-	// D2RLoader's own Multiplayer window is open: its CREATE GAME hosts, so the
-	// panel has no create form and sits at the screen's left edge beside it.
-	bool loader = false;
+	// Shown as the D2R Rooms tab of D2RLoader's own Multiplayer window, in place
+	// of its tab content: no frame, and its CREATE GAME hosts (no create form).
+	bool tab = false;
 };
 
 int PageCount(size_t roomCount);
@@ -37,5 +40,8 @@ int PageCount(size_t roomCount);
 std::string FieldText(std::string_view text);
 
 std::string PanelLayout(const PanelView& view);
+
+// The D2R Rooms tab button, beside BROWSE GAMES in D2RLoader's window.
+std::string TabLayout();
 
 }  // namespace rooms
