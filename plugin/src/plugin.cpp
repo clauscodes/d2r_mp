@@ -49,7 +49,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.3.1",
+	.version     = "0.3.2",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -317,6 +317,16 @@ void ApplyLayout() {
 	if (reopen) {
 		const auto opened = g_panels->openPanel(g_ctx, g_panel);
 		if (opened != D2RL::Panels::Result::Success) Log("panel: reopen failed %u", static_cast<unsigned>(opened));
+	}
+	// Whether D2R shows this layout or kept an older one: its first row's
+	// widget is there or not, a frame later.
+	if (g_panelOpen && !view.rooms.empty()) {
+		OnUi([rooms = view.rooms.size()] {
+			D2RL::Widgets::WidgetHandle panel = D2RL::Widgets::InvalidHandle, row = D2RL::Widgets::InvalidHandle;
+			const bool shown = g_widgets->findPanel(g_ctx, kPanelName, &panel) == D2RL::Widgets::Result::Success &&
+			                   g_widgets->findWidget(g_ctx, panel, "Room0", &row) == D2RL::Widgets::Result::Success;
+			Log("panel: %zu room(s), first row %s", rooms, shown ? "shown" : "NOT shown");
+		});
 	}
 }
 
@@ -887,6 +897,12 @@ D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContex
 				ShowPanel(false);
 			});
 		}
+	} else if (target == kLoaderMessage && command == "Close") {
+		// D2RLoader closes its window with its own message, not ClosePanel.
+		OnUi([] {
+			g_loaderUi = false;
+			ShowPanel(false);
+		});
 	} else if (target == kLoaderMessage && command == "CreateGame") {
 		// Read its fields now, before D2RLoader moves on; it hosts by itself.
 		try {
