@@ -112,7 +112,7 @@ std::string WindowLayout(const PanelView& view, int pages, int page) {
 	const int textW = buttonX - left - 40;
 	std::vector<std::string> children;
 	children.push_back("{\"type\":\"GridImageWidget\",\"name\":\"Background\",\"fields\":{\"filename\":\"PANEL\\\\TCP_IP\\\\TCP_IP_PanelBG\"}}");
-	children.push_back("{\"type\":\"TextBoxWidget\",\"name\":\"Title\",\"fields\":{\"rect\":" + Rect(0, 30, kWindowWidth, 90) +
+	children.push_back("{\"type\":\"TextBoxWidget\",\"name\":\"Title" + std::to_string(view.generation) + "\",\"fields\":{\"rect\":" + Rect(0, 30, kWindowWidth, 90) +
 		",\"text\":\"Multiplayer\",\"style\":\"$StyleTitleBlock\"}}");
 	children.push_back(
 		"{\"type\":\"ButtonWidget\",\"name\":\"Close\",\"fields\":{\"rect\":" + Rect(kWindowWidth - 90, 9) +
@@ -162,7 +162,8 @@ std::string PanelLayout(const PanelView& view) {
 	const int buttonX = 870;
 	std::vector<std::string> children;
 	children.push_back("{\"type\":\"GridImageWidget\",\"name\":\"Background\",\"fields\":{\"filename\":\"PANEL\\\\TCP_IP\\\\TCP_IP_PanelBG\"}}");
-	children.push_back("{\"type\":\"TextBoxWidget\",\"name\":\"Title\",\"fields\":{\"rect\":\"$InGamePanelTitleRect\",\"text\":\"D2R Rooms\",\"style\":\"$StyleTitleBlock\"}}");
+	children.push_back("{\"type\":\"TextBoxWidget\",\"name\":\"Title" + std::to_string(view.generation) +
+		"\",\"fields\":{\"rect\":\"$InGamePanelTitleRect\",\"text\":\"D2R Rooms\",\"style\":\"$StyleTitleBlock\"}}");
 	children.push_back(
 		"{\"type\":\"ButtonWidget\",\"name\":\"Close\",\"fields\":{\"rect\":{\"x\":1075,\"y\":9},\"filename\":\"PANEL\\\\closebtn_4x\","
 		"\"hoveredFrame\":3,\"onClickMessage\":\"" + std::string(kMessageTarget) + ":Close\"}}");

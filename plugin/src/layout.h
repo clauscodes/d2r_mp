@@ -31,6 +31,8 @@ struct PanelView {
 	// The D2R Rooms window, in place of D2RLoader's own Multiplayer window
 	// with the same tabs: its CREATE GAME hosts, so no create form here.
 	bool tab = false;
+	// Names the title widget ("Title12"): the plugin checks which layout D2R shows.
+	int generation = 0;
 };
 
 int PageCount(size_t roomCount);

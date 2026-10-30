@@ -208,6 +208,13 @@ void TestLayout() {
 	CHECK(!emptyText);
 	CHECK((*layout)["fields"]["anchor"]["y"].asNumber() == 0);
 
+	// The title carries the layout's number: the plugin checks D2R shows the latest.
+	view.generation = 7;
+	layout = json::Parse(PanelLayout(view));
+	bool title7 = false;
+	for (size_t i = 0; i < (*layout)["children"].size(); ++i) title7 |= (*layout)["children"][i]["name"].asString() == "Title7";
+	CHECK(title7);
+
 	// The tab button is a panel of its own, named as the plugin registers it,
 	// and the plugin matches clicks on it itself.
 	const auto tab = json::Parse(TabLayout());
