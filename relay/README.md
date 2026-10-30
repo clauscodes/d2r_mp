@@ -50,5 +50,6 @@ messages/s up. What a real D2R game sends is still to be measured: the plugin lo
 ## Deploy
 
 Never on a push: a deploy restarts the room objects and drops relayed games. By hand, `npx wrangler deploy` in
-`relay/cloudflare`, or Actions → relay → Run workflow with "deploy" ticked. That needs the repository secrets
-`CLOUDFLARE_API_TOKEN` (with Workers and Durable Objects edit rights) and `CLOUDFLARE_ACCOUNT_ID`.
+`relay/cloudflare`, or Actions → relay → Run workflow on `main` with "deploy" ticked. That needs only the repository
+secret `CLOUDFLARE_API_TOKEN` (Workers Scripts edit, which covers Durable Objects); the account id is in the workflow,
+as the board's is in `worker/wrangler.jsonc`.

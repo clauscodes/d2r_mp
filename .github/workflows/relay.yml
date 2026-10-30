@@ -53,7 +53,8 @@ jobs:
         working-directory: relay/cloudflare
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # D2R Rooms's account, as in worker/wrangler.jsonc; wrangler.toml stays free of it for people running their own.
+      CLOUDFLARE_ACCOUNT_ID: 87f6ae07ac7a8f50750e929c897f63e5
       WRANGLER_SEND_METRICS: "false"
     steps:
       - uses: actions/checkout@v5
