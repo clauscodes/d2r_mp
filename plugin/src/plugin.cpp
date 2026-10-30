@@ -49,7 +49,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.7.0",
+	.version     = "0.8.0",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -91,12 +91,17 @@ bool g_panelOpen = false;
 bool g_loaderUi = false;  // D2RLoader's Multiplayer window is open
 bool g_tabButtonOpen = false;  // the D2R Rooms tab button beside its BROWSE GAMES
 bool g_tabActive = false;      // the D2R Rooms window is open in place of D2RLoader's
-std::optional<Room> g_passwordRoom;  // Join was pressed on this locked room
+// Join was pressed on this locked room: its password goes into D2RLoader's
+// Direct Join box, and that box's Join is taken over (OnUiMessage).
+std::optional<Room> g_lockedJoin;
+std::atomic<bool> g_resendJoinDirect {false};  // the join then presses Direct Join's Join again
+std::chrono::steady_clock::time_point g_resendUntil;  // that press is not taken over again
 struct JoinFlow {
 	int step = 0;  // 0 = idle
 	int ticks = 0;
 	std::string address;
 	bool loader = false;  // through D2RLoader's Direct Join instead of D2R's Join Game
+	bool press = true;    // press its Join (a locked room: the player does, after the password)
 } g_join;
 
 std::atomic<int> g_act {0};
@@ -310,7 +315,6 @@ PanelView CurrentView() {
 		view.page = g_page;
 		view.status = g_status.empty() ? RelaysLine() : g_status + "     " + RelaysLine();
 		view.tab = g_tabActive;
-		if (g_passwordRoom) view.passwordFor = g_passwordRoom->name;
 		view.hosting = g_hosted.has_value();
 		if (g_hosted && g_hostRelay)
 			view.hostingText = "You host room [" + g_hosted->code + "]. Your port cannot be reached from outside, so friends join through relay " +
@@ -326,12 +330,15 @@ PanelView CurrentView() {
 // this session: D2R reads a panel's layout only on its first open, and showed
 // "Loading the rooms..." for good otherwise. After the whole pool, the oldest
 // panel comes again (it may show an old layout; the log says so).
+PanelView g_shownView;  // the layout last given to D2R: its buttons are matched to clicks
+
 void ApplyLayoutText(PanelView& view) {
 	if (g_panelOpen && g_slot >= 0) g_panels->closePanel(g_ctx, g_pool[g_slot]);
 	const int slot = g_nextSlot++ % kPanelSlots;
 	if (g_nextSlot == kPanelSlots + 1) Log("panel: the pool of %d panels is used up; reusing them", kPanelSlots);
 	view.slot = slot;
 	g_slot = slot;
+	g_shownView = view;
 	const std::string layout = PanelLayout(view);
 	const std::string path = PanelPath(slot);
 	if (g_poolLayout[slot] != D2RL::Resources::InvalidHandle) g_resources->unregisterResource(g_ctx, g_poolLayout[slot]);
@@ -569,14 +576,16 @@ void LoaderJoinTick() {
 	}
 	if (g_join.step == 3) {
 		Log("join: direct join box had '%s'", box().c_str());
-		TypeText(g_join.address);
+		if (!g_join.address.empty()) TypeText(g_join.address);
 		g_join.step = 4;
 		OnUi(JoinTick);
 		return;
 	}
 	const std::string typed = box();
 	Log("join: direct join box has '%s', want '%s'", typed.c_str(), g_join.address.c_str());
-	if (typed == g_join.address) {
+	if (!g_join.press) {
+		Log("join: the player types the room's password into Direct Join and presses Join");
+	} else if (typed == g_join.address) {
 		Dispatch(kLoaderMessage, "JoinDirect", g_join.address.c_str());
 	} else {
 		// Direct Join is open in D2RLoader's window: the player finishes it.
@@ -614,7 +623,20 @@ void JoinTick() {
 	g_join = {};
 }
 
+// The Join of Direct Join that a locked room's join took over goes on to
+// D2RLoader now: the relay is up (or the board or relay refused, and
+// D2RLoader's own "unable to join" says so).
+void ResendJoinDirect() {
+	g_resendUntil = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+	Dispatch(kLoaderMessage, "JoinDirect");
+}
+
 void StartJoin(const JoinAnswer& answer) {
+	if (g_resendJoinDirect.exchange(false)) {
+		Log("join: %s ready; Direct Join goes on", answer.address.c_str());
+		ResendJoinDirect();
+		return;
+	}
 	// D2R's TCP/IP join takes an address without a port; the board lists port 4000.
 	g_join = {.step = 1, .ticks = 0, .address = answer.address, .loader = g_loaderUi || g_tabActive};
 	const bool relayed = answer.relay && answer.address.rfind("127.", 0) == 0;
@@ -665,6 +687,7 @@ void JoinThroughRelay(JoinAnswer answer) {
 	if (answer.address.empty()) {
 		Log("join: relay %s refused (%s)", answer.relay->url.c_str(), error.c_str());
 		SetStatus("The relay did not take you (" + error + ").");
+		if (g_resendJoinDirect.exchange(false)) OnUi(ResendJoinDirect);
 		OnUi(ApplyLayout);
 		return;
 	}
@@ -683,12 +706,16 @@ void Join(int row) {
 		if (row < 0 || index >= g_rooms.size()) return;
 		room = g_rooms[index];
 	}
-	// In the D2R Rooms window a locked room's password is asked for now; the
-	// TCP/IP panel's field is filled in before Join.
-	if (room.locked && g_tabActive) {
-		g_passwordRoom = room;
-		SetStatus("Room " + room.name + " has a password.");
-		ApplyLayout();
+	// From the D2R Rooms window a locked room's password goes into D2RLoader's
+	// Direct Join box (a plugin panel takes no typing): it opens with the
+	// address, and its Join is taken over to ask the board and open the relay.
+	if (room.locked && (g_tabActive || g_loaderUi)) {
+		Log("join: room %s has a password: Direct Join first", room.code.c_str());
+		g_lockedJoin = room;
+		g_join = {.step = 1, .ticks = 0, .address = room.relayUrl.empty() ? "" : "127.0.0.1", .loader = true, .press = false};
+		g_tabActive = false;
+		ShowPanel(false);
+		OnUi(JoinTick);
 		return;
 	}
 	const std::string password = room.locked ? ReadInput(CurrentPanel().c_str(), {"RoomName"}) : std::string();
@@ -711,7 +738,9 @@ void JoinRoom(const Room& room, const std::string& password) {
 	Send(D2RL::Http::Method::Post, "/api/join", JoinBody(room.id, password, g_mod), {}, [versionNote](int status, const std::string& body) {
 		auto answer = status == 200 ? ParseJoin(body) : std::nullopt;
 		if (!answer) {
+			Log("join: the board answered %d", status);
 			SetStatus(Explain(status, body));
+			if (g_resendJoinDirect.exchange(false)) OnUi(ResendJoinDirect);
 			OnUi(ApplyLayout);
 			return;
 		}
@@ -973,20 +1002,6 @@ void HandleOwn(const std::string& command, const std::string& text) {
 	if (command == "Close") {
 		g_tabActive = false;
 		ShowPanel(false);
-	} else if (command == "JoinWithPassword" && g_passwordRoom) {
-		const std::string password = ReadInput(CurrentPanel().c_str(), {"RoomName"});
-		if (password.empty()) {
-			SetStatus("Type the password of " + g_passwordRoom->name + " first.");
-			ApplyLayout();
-			return;
-		}
-		const Room room = *g_passwordRoom;
-		g_passwordRoom.reset();
-		JoinRoom(room, password);
-	} else if (command == "CancelPassword") {
-		g_passwordRoom.reset();
-		SetStatus("");
-		ApplyLayout();
 	} else if (command == "Tab") {
 		if (g_loaderUi) EnterTab();  // in the D2R Rooms window it is the selected tab
 	} else if (command == "ToHost" || command == "ToBrowse") {
@@ -1024,7 +1039,8 @@ void HandleClick() {
 	const double scale = std::min(rc.right / 3840.0, rc.bottom / 2160.0);
 	const int x = static_cast<int>((p.x - rc.right / 2.0) / scale);
 	const int y = static_cast<int>(p.y / scale);
-	for (const HitArea& a : TabHitAreas()) {
+	const std::vector<HitArea> areas = g_tabButtonOpen ? TabHitAreas() : WindowHitAreas(g_shownView);
+	for (const HitArea& a : areas) {
 		if (x < a.x || x >= a.x + a.width || y < a.y || y >= a.y + a.height) continue;
 		Log("click: %d,%d -> %s %s", x, y, a.command.c_str(), a.argument.c_str());
 		g_lastClickCommand = a.command;
@@ -1052,11 +1068,30 @@ D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContex
 		}
 		return D2RL::SharedEvents::UiMessageAction::Consume;
 	}
-	if (target == "InputMessage" && command == "LeftMouseButtonUp" && g_tabButtonOpen) {
+	const bool windowOpen = g_panelOpen && g_tabActive;
+	if (target == "InputMessage" && command == "LeftMouseButtonUp" && (g_tabButtonOpen || windowOpen)) {
 		try {
 			HandleClick();
 		} catch (...) {
 		}
+	}
+	if (target == "InputMessage" && command == "KeyDown" && windowOpen && (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) {
+		Log("key: Escape closes the window");
+		OnUi([] { HandleOwn("Close", ""); });
+	}
+	if (target == kLoaderMessage && command == "JoinDirect" && g_lockedJoin && std::chrono::steady_clock::now() >= g_resendUntil) {
+		// The player typed the locked room's password into Direct Join: the
+		// board gets it, the relay opens, then this press goes on.
+		const std::string password = ReadInput(kLoaderPanel, {"DirectJoinPasswordInput"});
+		const Room room = *g_lockedJoin;
+		g_lockedJoin.reset();
+		Log("join: Direct Join pressed for room %s (%s password)", room.code.c_str(), password.empty() ? "no" : "a");
+		g_resendJoinDirect = true;
+		try {
+			JoinRoom(room, password);
+		} catch (...) {
+		}
+		return D2RL::SharedEvents::UiMessageAction::Consume;
 	}
 	if (target == "PanelManager" && text == kLoaderPanel) {
 		if (command == "OpenPanel" || command == "OpenExclusivePanel") {

@@ -38,8 +38,6 @@ struct PanelView {
 	// Names the title widget ("Title12"): the plugin checks which layout D2R shows.
 	int generation = 0;
 	int slot = 0;  // the pool's panel this layout is for
-	// Join was pressed on this locked room: its password is asked for.
-	std::string passwordFor;
 };
 
 int PageCount(size_t roomCount);
@@ -61,5 +59,8 @@ struct HitArea {
 	std::string command, argument;  // as the button's own message
 };
 std::vector<HitArea> TabHitAreas();
+// The D2R Rooms window's buttons and its close button: in the front-end a
+// plugin panel gets no clicks at all, so the plugin matches them itself.
+std::vector<HitArea> WindowHitAreas(const PanelView& view);
 
 }  // namespace rooms

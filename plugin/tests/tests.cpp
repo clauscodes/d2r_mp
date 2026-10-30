@@ -213,13 +213,20 @@ void TestLayout() {
 	CHECK((*json::Parse(PanelLayout(view)))["name"].asString() == "d2r-rooms/Rooms9" && PanelPath(9) == "data/global/ui/layouts/d2r-rooms/Rooms9hd.json");
 	view.slot = 0;
 
-	// Join on a locked room asks for its password in the window.
-	view.passwordFor = "test";
-	layout = json::Parse(PanelLayout(view));
-	bool passwordAsked = false;
-	for (size_t i = 0; i < (*layout)["children"].size(); ++i) passwordAsked |= (*layout)["children"][i]["name"].asString() == "RoomName";
-	CHECK(passwordAsked);
-	view.passwordFor.clear();
+	// Clicks are matched by the plugin: the close button, each Join, Refresh,
+	// Host Game and Browse Games, all inside the window's art.
+	size_t joinAreas = 0;
+	bool close = false, refresh = false, host = false, browse = false, inside = true;
+	for (const HitArea& a : WindowHitAreas(view)) {
+		joinAreas += a.command == "Join";
+		close |= a.command == "Close";
+		refresh |= a.command == "Refresh";
+		host |= a.command == "ToHost";
+		browse |= a.command == "ToBrowse";
+		inside &= a.x >= -581 && a.x + a.width <= 581 && a.y >= 216 && a.y + a.height <= 216 + 1507;
+	}
+	CHECK(joinAreas == std::min<size_t>(view.rooms.size(), kRowsPerPage) && close && refresh && host && browse);
+	CHECK(inside);
 
 	// The title carries the layout's number: the plugin checks D2R shows the latest.
 	view.generation = 7;
@@ -335,9 +342,6 @@ int Dump(const std::string& dir) {
 	view.tab = true;
 	view.generation = 1;
 	std::ofstream(dir + "/window.json") << PanelLayout(view);
-	view.passwordFor = "test";
-	view.status = "Room test has a password.     Relays: D2R Rooms active";
-	std::ofstream(dir + "/window_password.json") << PanelLayout(view);
 	std::ofstream(dir + "/tab.json") << TabLayout();
 	return 0;
 }
