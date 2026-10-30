@@ -319,14 +319,16 @@ export class Board {
       data.joiners = data.joiners.slice(-JOINERS_KEPT);
       await this.db.prepare("UPDATE rooms SET data = ? WHERE room_id = ?").bind(JSON.stringify(data), row.room_id).run();
     }
+    // A host behind a relay cannot be reached at its address anyway, so the
+    // address is not handed out: joiners get only the relay's one-room pass.
+    const address = data.relay ? "" : row.address;
     return {
       room_id: row.room_id,
-      address: row.address,
+      address,
       port: row.port,
-      address_ipv6: isIPv6(row.address),
+      address_ipv6: isIPv6(address),
       mod_mismatch: req.mod !== null && req.mod.id !== row.mod_id,
-      // Set when the host's port is unreachable: join through this relay, or
-      // try the address when the relay refuses (over_budget) or does not answer.
+      // Set when the host's port is unreachable: join through this relay.
       relay: data.relay,
     };
   }

@@ -1,5 +1,6 @@
-// The board's web page: the room list, Join (shows the host's address) and
-// Create room (keeps the room alive while the page stays open).
+// The board's web page: only the list - each room's mod version, players,
+// characters and levels. Rooms are created and joined from the game by the
+// D2R Rooms plugin (a room may go through a relay, which only the plugin can use).
 
 export const PAGE = /* html */ `<!doctype html>
 <html lang="en">
@@ -46,48 +47,13 @@ button:disabled { opacity: .5; cursor: default; }
 table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
 td { padding: 4px 6px 4px 0; border-top: 1px solid var(--line); vertical-align: top; }
 td.r { text-align: right; white-space: nowrap; }
-.join { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.addr { font-family: ui-monospace, monospace; font-size: 16px; background: var(--chip); padding: 6px 10px; border-radius: 8px; user-select: all; }
-.warn { color: var(--warn); font-size: 13px; }
 .empty { color: var(--muted); text-align: center; padding: 28px 0; }
-details.card summary { cursor: pointer; font-weight: 600; }
-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 12px; }
-label { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
-label.check { display: flex; gap: 6px; align-items: center; }
-.full { grid-column: 1 / -1; }
-.hosting { border-color: var(--accent); }
 </style>
 </head>
 <body>
 <main>
   <h1>D2R Rooms</h1>
-  <p class="sub">Open Diablo II: Resurrected TCP/IP games. Join shows the host's address &mdash; in D2R choose TCP/IP, Join Game, and enter it.</p>
-
-  <div id="hosting"></div>
-
-  <details class="card" id="create-box">
-    <summary>Create a room</summary>
-    <form id="create">
-      <label class="full">Room name<input name="name" maxlength="32" required placeholder="Baal runs"></label>
-      <label>Mod<select name="mod">
-        <option value="d2r-vr">D2R VR Authentic</option>
-        <option value="d2r-pcvr">D2R VR Unleashed</option>
-        <option value="none">No VR mod</option>
-      </select></label>
-      <label>Mod version<input name="version" maxlength="24" placeholder="0.175.0"></label>
-      <label>Difficulty<select name="difficulty"><option>normal</option><option>nightmare</option><option>hell</option></select></label>
-      <label>Mode<select name="mode"><option>softcore</option><option>hardcore</option></select></label>
-      <label>Act<select name="act"><option value="">&ndash;</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
-      <label>Max players<select name="max_players"><option>8</option><option>7</option><option>6</option><option>5</option><option>4</option><option>3</option><option>2</option></select></label>
-      <label>Your character<input name="char" maxlength="32" placeholder="optional"></label>
-      <label>Class<select name="cls"><option value="unknown">&ndash;</option><option>amazon</option><option>assassin</option><option>barbarian</option><option>druid</option><option>necromancer</option><option>paladin</option><option>sorceress</option></select></label>
-      <label>Level<input name="level" type="number" min="1" max="99" placeholder="optional"></label>
-      <label>Password<input name="password" maxlength="64" placeholder="optional"></label>
-      <label class="full">Address players connect to<input name="address" maxlength="64" placeholder="leave empty: your internet address is used (or your VPN address, e.g. Radmin / ZeroTier)"></label>
-      <label class="check"><input type="checkbox" name="public" checked> Show in the public list</label>
-      <div class="full"><button class="primary" type="submit">Create room</button> <span class="meta">The room stays listed while this page is open.</span></div>
-    </form>
-  </details>
+  <p class="sub">Open Diablo II: Resurrected games. Create and join them in the game: Multiplayer &rarr; D2R Rooms (the D2R Rooms plugin).</p>
 
   <div class="bar">
     <select id="f-mod" aria-label="Mod">
@@ -109,7 +75,6 @@ const el = (tag, props = {}, ...kids) => {
   for (const k of kids) if (k != null) e.append(k);
   return e;
 };
-const joined = new Map(); // room_id -> the join answer, while the page is open
 const modLabel = (m) => m ? (MODS[m.id] || m.id) + (m.version ? " " + m.version : "") : "?";
 const cap = (s) => s ? s[0].toUpperCase() + s.slice(1) : "";
 
@@ -122,16 +87,12 @@ async function api(method, path, body, token) {
   return data;
 }
 
-function addressText(a) {
-  const host = a.address.includes(":") ? "[" + a.address + "]" : a.address;
-  return a.port === 4000 ? a.address : host + ":" + a.port;
-}
-
 function roomCard(room) {
   const card = el("div", { className: "card" });
   card.append(el("div", { className: "head" },
     el("span", { className: "name", textContent: room.name + (room.locked ? " \\u{1F512}" : "") }),
     el("span", { className: "code", textContent: room.code, title: "Room code" }),
+    room.relay_url ? el("span", { className: "chip", textContent: "relay" }) : null,
     el("span", { className: "meta", textContent:
       [cap(room.difficulty), cap(room.mode), room.act ? "Act " + room.act : null,
        room.players_count + "/" + room.max_players + " players", modLabel(room.mod)].filter(Boolean).join(" \\u00b7 ") })));
@@ -148,38 +109,6 @@ function roomCard(room) {
     }
     card.append(el("table", {}, tb));
   }
-  const out = el("div", { className: "join" });
-  const showAddress = (a) => {
-    const copy = el("button", { type: "button", textContent: "Copy" });
-    copy.onclick = () => navigator.clipboard?.writeText(a.address).then(() => copy.textContent = "Copied");
-    out.replaceChildren(el("span", { className: "addr", textContent: addressText(a) }), copy,
-      el("span", { className: "meta", textContent: "In D2R: Play \\u2192 TCP/IP \\u2192 Join Game \\u2192 this address" }));
-    if (a.address_ipv6) out.append(el("div", { className: "warn", textContent: "This is an IPv6 address; D2R may need the host's IPv4 or VPN address instead." }));
-  };
-  if (joined.has(room.room_id)) {
-    showAddress(joined.get(room.room_id));
-    card.append(out);
-    return card;
-  }
-  const btn = el("button", { className: "primary", type: "button", textContent: "Join" });
-  btn.onclick = async () => {
-    let password = "";
-    if (room.locked) {
-      password = prompt("Room password") ?? "";
-      if (!password) return;
-    }
-    btn.disabled = true;
-    try {
-      const a = await api("POST", "/api/join", { room_id: room.room_id, password });
-      joined.set(room.room_id, a); // kept across list refreshes
-      showAddress(a);
-    } catch (e) {
-      out.append(el("span", { className: "warn", textContent: e.status === 403 ? "Wrong password." : e.status === 429 ? "Too many attempts, wait a minute." : "Room is gone." }));
-      btn.disabled = false;
-    }
-  };
-  out.append(btn);
-  card.append(out);
   return card;
 }
 
@@ -194,55 +123,6 @@ async function load() {
     $("#rooms").replaceChildren(el("div", { className: "empty", textContent: "Could not load the rooms." }));
   }
 }
-
-let hosting = null;
-
-function showHosting() {
-  const box = $("#hosting");
-  if (!hosting) { box.replaceChildren(); $("#create-box").hidden = false; return; }
-  $("#create-box").hidden = true;
-  const close = el("button", { type: "button", textContent: "Close room" });
-  close.onclick = async () => {
-    clearInterval(hosting.timer);
-    await api("DELETE", "/api/rooms/" + hosting.room_id, null, hosting.host_token).catch(() => {});
-    hosting = null;
-    showHosting();
-    load();
-  };
-  const card = el("div", { className: "card hosting" },
-    el("div", { className: "head" },
-      el("span", { className: "name", textContent: "You are hosting" }),
-      el("span", { className: "code", textContent: hosting.code })),
-    el("p", { className: "meta", textContent: "Players connect to " + addressText(hosting) +
-      ". Host a TCP/IP game in D2R and keep this page open; closing it removes the room within a few minutes." }),
-    close);
-  if (hosting.address_ipv6) card.append(el("div", { className: "warn", textContent: "Your address was seen as IPv6. If players cannot connect, enter your IPv4 or VPN address when creating the room." }));
-  box.replaceChildren(card);
-}
-
-$("#create").onsubmit = async (ev) => {
-  ev.preventDefault();
-  const f = new FormData(ev.target);
-  const body = {
-    name: f.get("name"), mod: { id: f.get("mod"), version: f.get("version") || "" },
-    difficulty: f.get("difficulty"), mode: f.get("mode"), max_players: Number(f.get("max_players")),
-    public: f.get("public") === "on", password: f.get("password") || "",
-  };
-  if (f.get("act")) body.act = Number(f.get("act"));
-  if (f.get("address")) body.address = f.get("address");
-  if (f.get("char")) body.player = { name: f.get("char"), class: f.get("cls"), level: f.get("level") ? Number(f.get("level")) : null };
-  try {
-    hosting = await api("POST", "/api/rooms", body);
-    hosting.timer = setInterval(() => api("POST", "/api/rooms/" + hosting.room_id + "/heartbeat", {}, hosting.host_token)
-      .catch((e) => { if (e.status === 404) { clearInterval(hosting.timer); hosting = null; showHosting(); } }),
-      (hosting.heartbeat_every || 60) * 1000);
-    showHosting();
-    load();
-  } catch (e) {
-    const msg = { too_many_rooms: "You already host 3 rooms.", too_many_creates: "Too many rooms created, wait a minute.", invalid: "Check the fields: " + (e.data?.detail?.[0]?.loc || "") }[e.message] || "Could not create the room.";
-    alert(msg);
-  }
-};
 
 $("#f-mod").onchange = load;
 $("#f-diff").onchange = load;

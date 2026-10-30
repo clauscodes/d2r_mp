@@ -65,6 +65,10 @@ struct Hosted {
 
 // The mod this game was started with, from D2RLoader's "-mod <name>" argument.
 Mod DetectMod(std::string_view commandLine);
+// The mod's own plugin version from d2rloader.log ("[PLUGIN] D2R VR 0.189.0 by
+// natpoh [mod]"), the last one listed; "" when none. D2RLoader joins only
+// players with the same shared plugins, so the board shows it.
+std::string ModPluginVersion(std::string_view loaderLog);
 
 // "Authentic 0.175.0", "Unleashed", "no VR mod", or the id itself.
 std::string ModLabel(const Mod& mod);

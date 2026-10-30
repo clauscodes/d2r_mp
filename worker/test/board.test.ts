@@ -232,12 +232,15 @@ describe("page", () => {
     expect((await join({ room_id: room.room_id, password: "nope" })).status).toBe(403);
     const ok = await join({ room_id: room.room_id, password: "pw" });
     expect(ok.json.relay).toEqual(relay);
-    expect(ok.json.address).toBe(HOST_IP); // the fallback when the relay refuses
+    expect(ok.json.address).toBe(""); // unreachable anyway: the host's IP stays private
+    expect(JSON.stringify(ok.json)).not.toContain(HOST_IP);
     // The host turns the relay on later (its port check failed), then off.
     const plain = await create({}, "198.51.100.9");
     expect((await join({ room_id: plain.room_id })).json.relay).toBeNull();
+    expect((await join({ room_id: plain.room_id })).json.address).toBe("198.51.100.9");
     expect((await heartbeat(plain, { relay })).status).toBe(200);
     expect((await join({ room_id: plain.room_id })).json.relay).toEqual(relay);
+    expect((await join({ room_id: plain.room_id })).json.address).toBe("");
     expect((await heartbeat(plain, {})).status).toBe(200);
     expect((await join({ room_id: plain.room_id })).json.relay).toEqual(relay); // no field: unchanged
     expect((await heartbeat(plain, { relay: null })).status).toBe(200);

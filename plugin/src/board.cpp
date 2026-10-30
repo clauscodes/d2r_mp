@@ -60,6 +60,25 @@ Mod DetectMod(std::string_view commandLine) {
 	return mod;
 }
 
+std::string ModPluginVersion(std::string_view loaderLog) {
+	std::string version;
+	size_t at = 0;
+	while ((at = loaderLog.find("[PLUGIN]", at)) != std::string_view::npos) {
+		const size_t end = std::min(loaderLog.find('\n', at), loaderLog.size());
+		std::string_view line = loaderLog.substr(at + 8, end - at - 8);
+		at = end;
+		while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
+		if (!line.ends_with("[mod]")) continue;
+		const size_t by = line.rfind(" by ");
+		if (by == std::string_view::npos) continue;
+		line = line.substr(0, by);
+		const size_t space = line.rfind(' ');
+		const std::string_view v = space == std::string_view::npos ? line : line.substr(space + 1);
+		if (!v.empty() && v.size() <= 24 && v[0] >= '0' && v[0] <= '9') version = std::string(v);
+	}
+	return version;
+}
+
 std::string ModLabel(const Mod& mod) {
 	std::string label;
 	if (mod.id == "d2r-vr") label = "Authentic";
@@ -109,7 +128,7 @@ std::optional<std::vector<Room>> ParseRooms(std::string_view body) {
 
 std::optional<JoinAnswer> ParseJoin(std::string_view body) {
 	const auto doc = json::Parse(body);
-	if (!doc || (*doc)["address"].asString().empty()) return std::nullopt;
+	if (!doc) return std::nullopt;
 	JoinAnswer a;
 	a.address = (*doc)["address"].asString();
 	a.port = (*doc)["port"].asInt(4000);
@@ -118,6 +137,8 @@ std::optional<JoinAnswer> ParseJoin(std::string_view body) {
 	const json::Value& relay = (*doc)["relay"];
 	if (ParseRelayUrl(relay["url"].asString()) && !relay["room"].asString().empty() && !relay["key"].asString().empty())
 		a.relay = RelayRef {relay["url"].asString(), relay["room"].asString(), relay["key"].asString()};
+	// A room behind a relay comes without the host's address.
+	if (a.address.empty() && !a.relay) return std::nullopt;
 	return a;
 }
 

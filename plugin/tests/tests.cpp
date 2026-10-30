@@ -56,6 +56,11 @@ void TestDetectMod() {
 	CHECK(DetectMod("D2RLoader.exe -mod").id == "none");
 	CHECK(ModLabel({"d2r-vr", "0.175.0"}) == "Authentic 0.175.0");
 	CHECK(ModLabel({"d2r-pcvr", ""}) == "Unleashed");
+	CHECK(ModPluginVersion("[STARTUP] Loading plugins\r\n"
+	                       "[x]           \xE2\x94\x9C [PLUGIN]     D2R VR 0.189.0 by natpoh [mod]\r\n"
+	                       "[x]           \xE2\x94\x9C [PLUGIN]     D2R Rooms 0.3.0 by D2R Rooms [global]\r\n") == "0.189.0");
+	CHECK(ModPluginVersion("[PLUGIN]     D2R Rooms 0.3.0 by D2R Rooms [global]\n").empty());
+	CHECK(ModPluginVersion("").empty());
 	CHECK(ModLabel({"none", ""}) == "no VR mod");
 }
 
@@ -252,6 +257,10 @@ void TestRelay() {
 	auto join = ParseJoin(R"({"address":"1.2.3.4","port":4000,"relay":{"url":"wss://r.example","room":"room-id-0123456789ab","key":"key-0123456789abcdef"}})");
 	CHECK(join && join->relay && join->relay->url == "wss://r.example" && join->relay->key == "key-0123456789abcdef");
 	CHECK(!ParseJoin(R"({"address":"1.2.3.4","relay":null})")->relay);
+	// Behind a relay the board keeps the host's address to itself.
+	join = ParseJoin(R"({"address":"","port":4000,"relay":{"url":"wss://r.example","room":"room-id-0123456789ab","key":"key-0123456789abcdef"}})");
+	CHECK(join && join->relay && join->address.empty());
+	CHECK(!ParseJoin(R"({"address":"","relay":null})"));
 	const RelayRef ref {"wss://r.example", "room-id-0123456789ab", "key-0123456789abcdef"};
 	auto hb = json::Parse(HeartbeatBody(2, 0, RelayRefJson(ref)));
 	CHECK(hb && (*hb)["relay"]["room"].asString() == ref.room);

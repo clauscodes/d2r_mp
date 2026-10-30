@@ -49,7 +49,7 @@ constexpr D2RL::PluginInfo kInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = kPluginId,
 	.name        = "D2R Rooms",
-	.version     = "0.3.0",
+	.version     = "0.3.1",
 	.author      = "D2R Rooms",
 	.description = "Open TCP/IP rooms: list, join and create beside the Multiplayer or TCP/IP screen.",
 	.flags       = D2RL::PluginFlags::Client,
@@ -169,6 +169,14 @@ int GamePort() {
 
 std::string LoaderLog() {
 	return g_gameDir + "d2rloader\\logs\\d2rloader.log";
+}
+
+// The mod's plugin version (D2R VR 0.189.0) from D2RLoader's startup lines,
+// read once it is there: the board shows it, and joining needs the same one.
+void ReadModVersion() {
+	if (!g_mod.version.empty()) return;
+	g_mod.version = ModPluginVersion(ReadText(LoaderLog()));
+	if (!g_mod.version.empty()) Log("mod: %s", ModLabel(g_mod).c_str());
 }
 
 // --- threads ------------------------------------------------------------
@@ -541,7 +549,13 @@ void JoinThroughRelay(JoinAnswer answer) {
 		return;
 	}
 	// The relay refused (its limit, the host gone) or does not answer: the
-	// host's own address is the last try.
+	// host's own address is the last try, when the board gave one.
+	if (answer.address.empty()) {
+		Log("join: relay %s refused (%s)", answer.relay->url.c_str(), error.c_str());
+		SetStatus("The relay did not take you (" + error + ").");
+		OnUi(ApplyLayout);
+		return;
+	}
 	Log("join: relay %s refused (%s), trying %s", answer.relay->url.c_str(), error.c_str(), answer.address.c_str());
 	SetStatus("The relay did not take you (" + error + "); trying the host's address.");
 	OnUi([answer] { StartJoin(answer); });
@@ -556,16 +570,26 @@ void Join(int row) {
 		room = g_rooms[index];
 	}
 	const std::string password = room.locked ? ReadInput(kPanelName, {"RoomName"}) : std::string();
-	Log("join: room %s", room.code.c_str());
-	Send(D2RL::Http::Method::Post, "/api/join", JoinBody(room.id, password, g_mod), {}, [](int status, const std::string& body) {
-		const auto answer = status == 200 ? ParseJoin(body) : std::nullopt;
+	ReadModVersion();
+	Log("join: room %s (%s; mine %s)", room.code.c_str(), ModLabel(room.mod).c_str(), ModLabel(g_mod).c_str());
+	// D2RLoader joins only the same shared plugins: say so before it refuses.
+	const std::string versionNote = !room.mod.version.empty() && !g_mod.version.empty() && room.mod.version != g_mod.version
+		? " The host plays " + ModLabel(room.mod) + ", you " + ModLabel(g_mod) + ": D2RLoader needs the same version."
+		: std::string();
+	Send(D2RL::Http::Method::Post, "/api/join", JoinBody(room.id, password, g_mod), {}, [versionNote](int status, const std::string& body) {
+		auto answer = status == 200 ? ParseJoin(body) : std::nullopt;
 		if (!answer) {
 			SetStatus(Explain(status, body));
 			OnUi(ApplyLayout);
 			return;
 		}
+		if (!versionNote.empty()) {
+			Log("join:%s", versionNote.c_str());
+			SetStatus(versionNote.substr(1));
+		}
 		if (answer->ipv6) Log("join: host address is IPv6 (%s)", answer->address.c_str());
-		if (!answer->relay || g_relayCfg.mode == RelayMode::Never) {
+		// mode = never is about hosting; a room behind a relay is joined through it.
+		if (!answer->relay) {
 			OnUi([a = *answer] { StartJoin(a); });
 			return;
 		}
@@ -741,6 +765,7 @@ void StopHosting(bool removeFromBoard) {
 // host by itself; otherwise this goes on like D2R's own Host Game button.
 void CreateRoom(std::string name, const std::string& password, bool loader) {
 	if (name.empty()) name = "D2R game";
+	ReadModVersion();
 	Log("host: creating '%s'%s%s", name.c_str(), password.empty() ? "" : " with a password", loader ? " from D2RLoader's CREATE GAME" : "");
 	// D2RLoader's verdict on the port comes after this point in its log.
 	size_t logStart = 0;
