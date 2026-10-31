@@ -26,7 +26,10 @@ rooms (relay mark, VR version, players, Join, the password of a locked room).
 D2RLoader builds its window in its code and it is modal: a plugin cannot add
 to it, and clicks there never reach a plugin's button. So the tab button is
 the plugin's own panel at measured coordinates, and the plugin matches the
-cursor against it on each click.
+cursor against it on each click. The click is measured on the game's own picture (the
+overlay's screen size, centred on the window), so a game resolution below the
+window's or D2R VR's render size does not move it; **F9** opens the D2R Rooms
+window from D2RLoader's whatever the clicks do.
 
 Works with any D2RLoader setup — D2R VR Authentic, D2R VR Unleashed or no mod.
 It is a client-only plugin: nothing in game data or saves, not needed by other

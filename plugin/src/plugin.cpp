@@ -68,6 +68,7 @@ const D2RL::WidgetService*      g_widgets = nullptr;
 const D2RL::ThreadService*      g_threads = nullptr;
 const D2RL::HttpService*        g_http = nullptr;
 const D2RL::LifecycleService*   g_life = nullptr;
+const D2RL::OverlayService*     g_overlay = nullptr;  // optional: the game's picture size for clicks
 
 // The pool of rooms panels (layout.h); g_slot is the one shown or last shown.
 D2RL::Panels::RegistrationHandle    g_pool[kPanelSlots] {};
@@ -1346,9 +1347,16 @@ void HandleClick() {
 	POINT p {};
 	RECT rc {};
 	if (!hwnd || !GetCursorPos(&p) || !ScreenToClient(hwnd, &p) || !GetClientRect(hwnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
-	const double scale = std::min(rc.right / 3840.0, rc.bottom / 2160.0);
-	const int x = static_cast<int>((p.x - rc.right / 2.0) / scale);
-	const int y = static_cast<int>(p.y / scale);
+	// The game's own picture: the window's size unless the game renders at
+	// another (a lower resolution, D2R VR's render size).
+	int pictureW = 0, pictureH = 0;
+	D2RL::Overlay::Metrics m {};
+	m.structSize = sizeof(m);
+	if (g_overlay && g_overlay->getMetrics(g_ctx, &m) == D2RL::Overlay::Result::Success && m.screenWidth >= 1 && m.screenHeight >= 1) {
+		pictureW = static_cast<int>(m.screenWidth);
+		pictureH = static_cast<int>(m.screenHeight);
+	}
+	const auto [x, y] = ToLayout(p.x, p.y, rc.right, rc.bottom, pictureW, pictureH);
 	const std::vector<HitArea> areas = g_tabButtonOpen ? TabHitAreas() : WindowHitAreas(g_shownView);
 	for (const HitArea& a : areas) {
 		if (x < a.x || x >= a.x + a.width || y < a.y || y >= a.y + a.height) continue;
@@ -1358,7 +1366,7 @@ void HandleClick() {
 		HandleOwn(a.command, a.argument);
 		return;
 	}
-	Log("click: %d,%d (window %ldx%ld)", x, y, rc.right, rc.bottom);
+	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d)", x, y, rc.right, rc.bottom, p.x, p.y, pictureW, pictureH);
 }
 
 D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContext*, const D2RL::SharedEvents::UiMessageEvent* event, void*) noexcept {
@@ -1391,6 +1399,11 @@ D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContex
 			HandleClick();
 		} catch (...) {
 		}
+	}
+	// F9 opens the D2R Rooms window from D2RLoader's, whatever the clicks do.
+	if (target == "InputMessage" && command == "KeyDown" && g_tabButtonOpen && !windowOpen && (GetAsyncKeyState(VK_F9) & 0x8000)) {
+		Log("key: F9 opens D2R Rooms");
+		OnUi([] { HandleOwn("Tab", ""); });
 	}
 	if (target == "InputMessage" && command == "KeyDown" && windowOpen && (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) {
 		Log("key: Escape closes the window");
@@ -1628,6 +1641,7 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	char server[512] {};
 	if (GetEnvironmentVariableA("D2R_ROOMS_SERVER", server, sizeof(server)) > 0 && std::strncmp(server, "https://", 8) == 0)
 		g_server = server;
+	if (!Query(g_overlay, D2RL::OverlayServiceRequiredSize, D2RL::HasOverlayServiceField)) g_overlay = nullptr;
 	g_mod = DetectMod(GetCommandLineA());
 	Log("d2r-rooms %s: server %s, mod %s", kInfo.version, g_server.c_str(), ModLabel(g_mod).c_str());
 

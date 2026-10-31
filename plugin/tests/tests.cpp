@@ -242,6 +242,27 @@ void TestLayout() {
 	CHECK(TabHitAreas().size() == 1 && TabHitAreas()[0].command == "Tab");
 }
 
+// Clicks on the tab button: its middle is 695,238 in layout units.
+void TestToLayout() {
+	const auto near = [](LayoutPoint p, int x, int y) { return std::abs(p.x - x) <= 8 && std::abs(p.y - y) <= 8; };
+	const auto onTab = [](LayoutPoint p) {
+		const HitArea a = TabHitAreas()[0];
+		return p.x >= a.x && p.x < a.x + a.width && p.y >= a.y && p.y < a.y + a.height;
+	};
+	// A 16:9 window, the picture its own size: as before.
+	CHECK(near(ToLayout(960 + 695 * 0.5, 238 * 0.5, 1920, 1080, 0, 0), 695, 238));
+	CHECK(near(ToLayout(960 + 695 * 0.5, 238 * 0.5, 1920, 1080, 1920, 1080), 695, 238));
+	// A player's flat game: 1366x768 in a 2538x1323 window (his clicks on the
+	// button: 1512,363 in the window).
+	CHECK(onTab(ToLayout(1512, 363, 2538, 1323, 1366, 768)));
+	// D2R VR in the square 1920x1920 window, a 2734x1538 picture (clicks at 1455,367).
+	CHECK(onTab(ToLayout(1455, 367, 1920, 1920, 2734, 1538)));
+	// The same clicks measured against the window alone missed the button.
+	CHECK(!onTab(ToLayout(1512, 363, 2538, 1323, 0, 0)) && !onTab(ToLayout(1455, 367, 1920, 1920, 0, 0)));
+	// A square picture the window's size: the interface is the picture's width.
+	CHECK(near(ToLayout(960 + 695 * 0.5, 238 * 0.5, 1920, 1920, 0, 0), 695, 238));
+}
+
 void TestPlayerCount() {
 	CHECK(HeartbeatBody(1, 0).find("players_count") == std::string::npos);
 	const auto hb = json::Parse(HeartbeatBody(2, 0, {}, 3));
@@ -386,6 +407,7 @@ int main(int argc, char** argv) {
 	TestDetectMod();
 	TestBoard();
 	TestLayout();
+	TestToLayout();
 	TestPlayerCount();
 	TestRelay();
 	std::printf("%d checks, %d failed\n", g_checks, g_failed);

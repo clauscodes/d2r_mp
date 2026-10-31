@@ -13,7 +13,7 @@ Runs free on Cloudflare Workers + D1. Design: [SPEC.md](SPEC.md).
 ## Install the plugin (players)
 
 **Download: [d2rl-d2r-rooms.dll](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll)**
-(plugin 0.9.7, Windows x64, [SHA-256](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll.sha256);
+(plugin 0.9.8, Windows x64, [SHA-256](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll.sha256);
 sample settings: [d2r-rooms.ini](https://github.com/clauscodes/d2r_mp/raw/main/download/d2r-rooms.ini)).
 Open rooms: <https://d2r-rooms.d2r-rooms.workers.dev/>.
 
@@ -27,7 +27,7 @@ Open rooms: <https://d2r-rooms.d2r-rooms.workers.dev/>.
   listed on the board while you play. When friends cannot reach your PC (no port
   forwarding, a router without UPnP), the game goes through a relay: both PCs dial
   out, nobody touches a router.
-- **Join:** D2RLoader's **Multiplayer** → the **D2R Rooms** tab → **Join** on a room.
+- **Join:** D2RLoader's **Multiplayer** → the **D2R Rooms** tab (or **F9**) → **Join** on a room.
   For a locked room, type its password first. The plugin opens *Direct Join* and
   types the address (`127.0.0.1` when the room uses a relay).
 - **`mode`** in `d2r-rooms.ini`, `[relay]` section: `auto` (the default) uses a relay

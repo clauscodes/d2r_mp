@@ -1,6 +1,7 @@
 #include "layout.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 #include "json.h"
@@ -235,9 +236,20 @@ std::vector<HitArea> WindowHitAreas(const PanelView& view) {
 	return areas;
 }
 
+LayoutPoint ToLayout(double px, double py, int windowW, int windowH, int pictureW, int pictureH) {
+	if (pictureW <= 0 || pictureH <= 0) {
+		pictureW = windowW;
+		pictureH = windowH;
+	}
+	const double gx = px + (pictureW - windowW) / 2.0, gy = py + (pictureH - windowH) / 2.0;
+	const double scale = std::min(pictureW / 3840.0, pictureH / 2160.0);
+	if (scale <= 0) return {0, 0};
+	return {static_cast<int>(std::lround((gx - pictureW / 2.0) / scale)), static_cast<int>(std::lround(gy / scale))};
+}
+
 std::string TabLayout() {
 	return Panel(kTabPanelName, "{\"x\":0.5,\"y\":0}", Rect(kTabX, kTabY, kButtonWidth, kButtonHeight), kLoaderPriority,
-	             {Button("Tab", 0, 0, "D2R Rooms", "Tab")});
+	             {Button("Tab", 0, 0, "D2R Rooms (F9)", "Tab")});
 }
 
 }  // namespace rooms

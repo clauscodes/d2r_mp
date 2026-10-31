@@ -65,4 +65,14 @@ std::vector<HitArea> TabHitAreas();
 // plugin panel gets no clicks at all, so the plugin matches them itself.
 std::vector<HitArea> WindowHitAreas(const PanelView& view);
 
+// A point of the window's client area (real pixels) in layout units. The game
+// lays its interface out on its own picture (`pictureW` x `pictureH`, the
+// overlay's screen size; 0 = the window's), which sits centred on the window
+// when the two differ: a game resolution below the window's size, or D2R VR's
+// render size. The interface is 3840 x 2160 units fitted into the picture.
+struct LayoutPoint {
+	int x, y;
+};
+LayoutPoint ToLayout(double px, double py, int windowW, int windowH, int pictureW, int pictureH);
+
 }  // namespace rooms
