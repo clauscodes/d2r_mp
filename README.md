@@ -13,7 +13,7 @@ Runs free on Cloudflare Workers + D1. Design: [SPEC.md](SPEC.md).
 ## Install the plugin (players)
 
 **Download: [d2rl-d2r-rooms.dll](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll)**
-(plugin 0.9.8, Windows x64, [SHA-256](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll.sha256);
+(plugin 0.9.9, Windows x64, [SHA-256](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll.sha256);
 sample settings: [d2r-rooms.ini](https://github.com/clauscodes/d2r_mp/raw/main/download/d2r-rooms.ini)).
 Open rooms: <https://d2r-rooms.d2r-rooms.workers.dev/>.
 
@@ -38,6 +38,9 @@ Open rooms: <https://d2r-rooms.d2r-rooms.workers.dev/>.
   (or no mod for all); otherwise D2R says *Game Data Does Not Match*. The rooms list
   shows each room's VR version.
 - Both the host and every joiner of a relayed room need the plugin.
+- If the **D2R Rooms** button does not react (D2R VR, or a game resolution below the
+  window's), press *HOST GAME* or *BROWSE GAMES* once: the plugin learns where the
+  buttons are from that press. **F9** opens D2R Rooms in any case.
 
 More: [plugin/README.md](plugin/README.md); your own relay: [docs/host_a_relay.md](docs/host_a_relay.md).
 

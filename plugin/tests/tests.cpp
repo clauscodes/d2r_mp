@@ -261,6 +261,38 @@ void TestToLayout() {
 	CHECK(!onTab(ToLayout(1512, 363, 2538, 1323, 0, 0)) && !onTab(ToLayout(1455, 367, 1920, 1920, 0, 0)));
 	// A square picture the window's size: the interface is the picture's width.
 	CHECK(near(ToLayout(960 + 695 * 0.5, 238 * 0.5, 1920, 1920, 0, 0), 695, 238));
+
+	// Learning from D2RLoader's own presses. D2R VR on the 1920x1920 window:
+	// a 16:9 box 0.71 px a unit, top at 193 px (the player's VR log).
+	const ClickMap vr {0.71, 960, 193};
+	const auto press = [&](const char* command, int dx, int dy) {
+		const LayoutPoint t = *LoaderTarget(command);
+		const PixelPoint p = FromLayout(vr, t.x + dx, t.y + dy);
+		return ClickSample {p.x, p.y, t.x, t.y};
+	};
+	const ClickMap guess = PictureMap(1920, 1920, 0, 0);
+	const PixelPoint button = FromLayout(vr, 695, 238);
+	CHECK(!onTab(ToLayout(guess, button.x, button.y)));
+	CHECK(near(ToLayout(LearnMap(guess, 1920, 1920, {}), button.x, button.y), ToLayout(guess, button.x, button.y).x,
+	           ToLayout(guess, button.x, button.y).y));
+	// One press on BROWSE GAMES, off its middle: the button is hit.
+	ClickMap learned = LearnMap(guess, 1920, 1920, {press("ShowBrowse", 80, -40)});
+	CHECK(onTab(ToLayout(learned, button.x, button.y)));
+	CHECK(onTab(ToLayout(learned, button.x - 0.71 * 150, button.y + 0.71 * 30)));
+	// HOST GAME and CREATE GAME: two heights, scale and top measured.
+	learned = LearnMap(guess, 1920, 1920, {press("ShowHost", -60, 30), press("CreateGame", 100, 20)});
+	CHECK(std::abs(learned.k - 0.71) < 0.05 && std::abs(learned.top - 193) < 40 && onTab(ToLayout(learned, button.x, button.y)));
+	// The flat 1366x768 game in its 2538x1323 window: a press keeps the right guess right.
+	const ClickMap flat = PictureMap(2538, 1323, 1366, 768);
+	const LayoutPoint host = *LoaderTarget("ShowHost");
+	const PixelPoint hp = FromLayout(flat, host.x, host.y + 20);
+	learned = LearnMap(flat, 2538, 1323, {{hp.x, hp.y, host.x, host.y}});
+	CHECK(std::abs(learned.k - flat.k) < 0.03 && onTab(ToLayout(learned, 1512, 363)));
+	// A stray press (the guess's middle row) leaves the guess.
+	CHECK(LearnMap(guess, 1920, 1920, {{960, 960, 114, 342}}).k == guess.k);
+	// The window's own clicks go back to the same pixel.
+	const PixelPoint back = FromLayout(learned, 300, 900);
+	CHECK(near(ToLayout(learned, back.x, back.y), 300, 900));
 }
 
 void TestPlayerCount() {

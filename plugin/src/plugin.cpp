@@ -36,6 +36,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "board.h"
@@ -561,6 +562,9 @@ std::string ReadInput(const char* panel, std::initializer_list<const char*> path
 	return buffer;
 }
 
+// Until then a D2RLoader message is the plugin's own (Dispatch, a click it made).
+std::chrono::steady_clock::time_point g_selfUntil;
+
 bool Dispatch(const char* target, const char* command, const char* text = "") {
 	const D2RL::Widgets::UiAction action {
 		.structSize = D2RL::Widgets::UiActionSize,
@@ -569,6 +573,7 @@ bool Dispatch(const char* target, const char* command, const char* text = "") {
 		.command    = command,
 		.text       = text,
 	};
+	g_selfUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(800);
 	const auto r = g_widgets->dispatchUiAction(g_ctx, &action);
 	Log("dispatch %s:%s -> %u", target, command, static_cast<unsigned>(r));
 	return r == D2RL::Widgets::Result::Success;
@@ -592,6 +597,109 @@ HWND GameWindow() {
 	return hwnd;
 }
 
+// --- the window's pixels and layout units (layout.h ClickMap) ------------
+// The first guess is the game's picture (the overlay's screen size) centred on
+// the window; D2RLoader's own buttons, which the game hit-tests itself, teach
+// the real map: each press of one is a window pixel and a known place. Kept in
+// d2r-rooms-clicks.txt beside the DLL, per window size. UI thread.
+
+struct SavedSample {
+	int w, h;
+	ClickSample s;
+};
+std::vector<SavedSample> g_clickSamples;
+constexpr size_t kSamplesPerSize = 8;
+
+// The last press of the left button: where, on which window size, when.
+struct Press {
+	POINT p {};
+	int w = 0, h = 0;
+	std::chrono::steady_clock::time_point at;
+};
+Press g_lastPress;
+
+bool CursorInClient(POINT* p, RECT* rc) {
+	HWND hwnd = GameWindow();
+	return hwnd && GetCursorPos(p) && ScreenToClient(hwnd, p) && GetClientRect(hwnd, rc) && rc->right > 0 && rc->bottom > 0;
+}
+
+std::string ClicksPath() {
+	return DllDir() + "d2r-rooms-clicks.txt";
+}
+
+void LoadClickSamples() {
+	std::istringstream in(ReadText(ClicksPath()));
+	SavedSample s {};
+	while (in >> s.w >> s.h >> s.s.px >> s.s.py >> s.s.x >> s.s.y) g_clickSamples.push_back(s);
+	if (!g_clickSamples.empty()) Log("clicks: %zu press(es) of D2RLoader's buttons from earlier games", g_clickSamples.size());
+}
+
+void SaveClickSamples() {
+	std::ostringstream out;
+	for (const SavedSample& s : g_clickSamples) out << s.w << ' ' << s.h << ' ' << s.s.px << ' ' << s.s.py << ' ' << s.s.x << ' ' << s.s.y << '\n';
+	std::ofstream(ClicksPath(), std::ios::binary | std::ios::trunc) << out.str();
+}
+
+ClickMap CurrentMap(int w, int h, int* pictureW = nullptr, int* pictureH = nullptr) {
+	int pw = 0, ph = 0;
+	D2RL::Overlay::Metrics m {};
+	m.structSize = sizeof(m);
+	if (g_overlay && g_overlay->getMetrics(g_ctx, &m) == D2RL::Overlay::Result::Success && m.screenWidth >= 1 && m.screenHeight >= 1) {
+		pw = static_cast<int>(m.screenWidth);
+		ph = static_cast<int>(m.screenHeight);
+	}
+	if (pictureW) *pictureW = pw;
+	if (pictureH) *pictureH = ph;
+	std::vector<ClickSample> samples;
+	for (const SavedSample& s : g_clickSamples)
+		if (s.w == w && s.h == h) samples.push_back(s.s);
+	return LearnMap(PictureMap(w, h, pw, ph), w, h, samples);
+}
+
+void Learn(const std::string& command, const LayoutPoint& target, const Press& press) {
+	std::vector<SavedSample> same;
+	for (const SavedSample& s : g_clickSamples)
+		if (s.w == press.w && s.h == press.h) same.push_back(s);
+	std::erase_if(g_clickSamples, [&](const SavedSample& s) { return s.w == press.w && s.h == press.h; });
+	same.push_back({press.w, press.h, {static_cast<double>(press.p.x), static_cast<double>(press.p.y), target.x, target.y}});
+	if (same.size() > kSamplesPerSize) same.erase(same.begin(), same.end() - kSamplesPerSize);
+	g_clickSamples.insert(g_clickSamples.end(), same.begin(), same.end());
+	SaveClickSamples();
+	const ClickMap map = CurrentMap(press.w, press.h);
+	Log("clicks: %s at %ld,%ld px (window %dx%d) -> %.3f px a unit, top %.0f px (%zu press(es))", command.c_str(), press.p.x, press.p.y, press.w,
+	    press.h, map.k, map.top, same.size());
+}
+
+// A D2RLoader button message waiting for its press's release (its tabs answer
+// on the press, CREATE GAME on the release).
+std::string g_pendingLearn;
+std::chrono::steady_clock::time_point g_pendingAt;
+
+// D2RLoader answered a press of one of its buttons: learn from it.
+void LearnFromLoader(const std::string& command) {
+	const auto target = LoaderTarget(command);
+	const auto now = std::chrono::steady_clock::now();
+	if (!target || now < g_selfUntil) return;
+	if (now - g_lastPress.at < std::chrono::milliseconds(150)) {
+		Learn(command, *target, g_lastPress);
+	} else {
+		g_pendingLearn = command;
+		g_pendingAt = now;
+	}
+}
+
+// A left button press or release in the game window.
+void OnPress(bool release) {
+	RECT rc {};
+	if (!CursorInClient(&g_lastPress.p, &rc)) return;
+	g_lastPress.w = rc.right;
+	g_lastPress.h = rc.bottom;
+	g_lastPress.at = std::chrono::steady_clock::now();
+	if (!release || g_pendingLearn.empty()) return;
+	const std::string command = std::exchange(g_pendingLearn, {});
+	if (g_lastPress.at - g_pendingAt < std::chrono::milliseconds(500)) Learn(command, *LoaderTarget(command), g_lastPress);
+}
+
 // Clicks one of D2RLoader's widgets as the player would: its text boxes take
 // the keyboard only after a click (typing into the open Direct Join box went
 // nowhere on 0.8.1). Its rect is in that window's units from the screen's top
@@ -610,7 +718,7 @@ bool ClickLoaderWidget(const char* container, const char* name) {
 	HWND hwnd = GameWindow();
 	RECT client {};
 	if (!hwnd || !GetClientRect(hwnd, &client) || client.right <= 0 || client.bottom <= 0) return false;
-	const double scale = std::min(client.right / 3840.0, client.bottom / 2160.0);
+	const ClickMap map = CurrentMap(client.right, client.bottom);
 	// D2RLoader reports its Direct Join box (DirectJoinContainer) at 0,0, while
 	// the fields' rects are from the box's corner. Measured in the game: the
 	// player's click on its Join Game at -209,1181 and that button at 355,444 in
@@ -620,7 +728,9 @@ bool ClickLoaderWidget(const char* container, const char* name) {
 		rc.y = 737;
 	}
 	const int x = rc.x + rw.x + rw.width / 2, y = rc.y + rw.y + rw.height / 2;
-	POINT p {static_cast<LONG>(client.right / 2.0 + x * scale), static_cast<LONG>(y * scale)};
+	const PixelPoint at = FromLayout(map, x, y);
+	POINT p {static_cast<LONG>(at.x), static_cast<LONG>(at.y)};
+	g_selfUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
 	Log("click: %s %d,%d %dx%d in %s %d,%d -> %d,%d px", name, rw.x, rw.y, rw.width, rw.height, container, rc.x, rc.y, p.x, p.y);
 	ClientToScreen(hwnd, &p);
 	POINT old {};
@@ -1343,20 +1453,12 @@ std::string g_lastClickCommand;
 std::chrono::steady_clock::time_point g_lastClickAt;
 
 void HandleClick() {
-	HWND hwnd = GameWindow();
 	POINT p {};
 	RECT rc {};
-	if (!hwnd || !GetCursorPos(&p) || !ScreenToClient(hwnd, &p) || !GetClientRect(hwnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
-	// The game's own picture: the window's size unless the game renders at
-	// another (a lower resolution, D2R VR's render size).
+	if (!CursorInClient(&p, &rc)) return;
 	int pictureW = 0, pictureH = 0;
-	D2RL::Overlay::Metrics m {};
-	m.structSize = sizeof(m);
-	if (g_overlay && g_overlay->getMetrics(g_ctx, &m) == D2RL::Overlay::Result::Success && m.screenWidth >= 1 && m.screenHeight >= 1) {
-		pictureW = static_cast<int>(m.screenWidth);
-		pictureH = static_cast<int>(m.screenHeight);
-	}
-	const auto [x, y] = ToLayout(p.x, p.y, rc.right, rc.bottom, pictureW, pictureH);
+	const ClickMap map = CurrentMap(rc.right, rc.bottom, &pictureW, &pictureH);
+	const auto [x, y] = ToLayout(map, p.x, p.y);
 	const std::vector<HitArea> areas = g_tabButtonOpen ? TabHitAreas() : WindowHitAreas(g_shownView);
 	for (const HitArea& a : areas) {
 		if (x < a.x || x >= a.x + a.width || y < a.y || y >= a.y + a.height) continue;
@@ -1366,7 +1468,8 @@ void HandleClick() {
 		HandleOwn(a.command, a.argument);
 		return;
 	}
-	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d)", x, y, rc.right, rc.bottom, p.x, p.y, pictureW, pictureH);
+	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d, %.3f px a unit, top %.0f)", x, y, rc.right, rc.bottom, p.x, p.y, pictureW, pictureH,
+	    map.k, map.top);
 }
 
 D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContext*, const D2RL::SharedEvents::UiMessageEvent* event, void*) noexcept {
@@ -1392,6 +1495,18 @@ D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContex
 		} catch (...) {
 		}
 		return D2RL::SharedEvents::UiMessageAction::Consume;
+	}
+	if (target == "InputMessage" && (command == "LeftMouseButtonDown" || command == "LeftMouseButtonUp")) {
+		try {
+			OnPress(command == "LeftMouseButtonUp");
+		} catch (...) {
+		}
+	}
+	if (target == kLoaderMessage) {
+		try {
+			LearnFromLoader(command);
+		} catch (...) {
+		}
 	}
 	const bool windowOpen = g_panelOpen && g_tabActive;
 	if (target == "InputMessage" && command == "LeftMouseButtonUp" && (g_tabButtonOpen || windowOpen)) {
@@ -1649,6 +1764,7 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	g_gameDir = ExeDir();
 	net::StartNetworking();
 	LoadRelayConfig();
+	LoadClickSamples();
 	for (const RelayServer& r : g_relayCfg.relays) Log("relay: %s = %s%s", r.name.c_str(), r.url.c_str(), r.key.empty() ? "" : " (with a key)");
 	Log("command line: %s", GetCommandLineA());  // does D2RLoader's -mod reach D2R.exe?
 

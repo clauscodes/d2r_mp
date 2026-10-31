@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <iterator>
 
 #include "json.h"
@@ -236,15 +237,74 @@ std::vector<HitArea> WindowHitAreas(const PanelView& view) {
 	return areas;
 }
 
-LayoutPoint ToLayout(double px, double py, int windowW, int windowH, int pictureW, int pictureH) {
+LayoutPoint ToLayout(const ClickMap& map, double px, double py) {
+	if (map.k <= 0) return {0, 0};
+	return {static_cast<int>(std::lround((px - map.cx) / map.k)), static_cast<int>(std::lround((py - map.top) / map.k))};
+}
+
+PixelPoint FromLayout(const ClickMap& map, double x, double y) {
+	return {map.cx + x * map.k, map.top + y * map.k};
+}
+
+ClickMap PictureMap(int windowW, int windowH, int pictureW, int pictureH) {
 	if (pictureW <= 0 || pictureH <= 0) {
 		pictureW = windowW;
 		pictureH = windowH;
 	}
-	const double gx = px + (pictureW - windowW) / 2.0, gy = py + (pictureH - windowH) / 2.0;
-	const double scale = std::min(pictureW / 3840.0, pictureH / 2160.0);
-	if (scale <= 0) return {0, 0};
-	return {static_cast<int>(std::lround((gx - pictureW / 2.0) / scale)), static_cast<int>(std::lround(gy / scale))};
+	return {std::min(pictureW / 3840.0, pictureH / 2160.0), windowW / 2.0, (windowH - pictureH) / 2.0};
+}
+
+LayoutPoint ToLayout(double px, double py, int windowW, int windowH, int pictureW, int pictureH) {
+	return ToLayout(PictureMap(windowW, windowH, pictureW, pictureH), px, py);
+}
+
+std::optional<LayoutPoint> LoaderTarget(std::string_view command) {
+	// The tabs: D2RLoader's MainTabs row is 282..403; the buttons from a
+	// player's flat game (1366x768) and the Direct Join box's measured corner.
+	if (command == "ShowHost") return LayoutPoint {-125, 342};
+	if (command == "ShowBrowse") return LayoutPoint {114, 342};
+	if (command == "CreateGame") return LayoutPoint {-6, 1510};
+	if (command == "JoinDirect") return LayoutPoint {-209, 1181};
+	return std::nullopt;
+}
+
+ClickMap LearnMap(const ClickMap& guess, int windowW, int windowH, const std::vector<ClickSample>& samples) {
+	if (samples.empty() || windowW <= 0 || windowH <= 0) return guess;
+	ClickMap map {0, windowW / 2.0, 0};
+	int lo = samples[0].y, hi = samples[0].y;
+	for (const ClickSample& s : samples) {
+		lo = std::min(lo, s.y);
+		hi = std::max(hi, s.y);
+	}
+	if (hi - lo >= 400) {
+		// Two heights: py = top + y * k by least squares.
+		double my = 0, mp = 0;
+		for (const ClickSample& s : samples) {
+			my += s.y;
+			mp += s.py;
+		}
+		my /= samples.size();
+		mp /= samples.size();
+		double cov = 0, var = 0;
+		for (const ClickSample& s : samples) {
+			cov += (s.y - my) * (s.py - mp);
+			var += (s.y - my) * (s.y - my);
+		}
+		map.k = cov / var;
+		map.top = mp - map.k * my;
+	} else {
+		// One height: the box centred on the window, its scale from each press.
+		std::vector<double> ks;
+		for (const ClickSample& s : samples)
+			if (std::abs(1080 - s.y) >= 300) ks.push_back((windowH / 2.0 - s.py) / (1080.0 - s.y));
+		if (ks.empty()) return guess;
+		std::sort(ks.begin(), ks.end());
+		map.k = ks[ks.size() / 2];
+		map.top = windowH / 2.0 - 1080 * map.k;
+	}
+	// A press far from where it was taken for (a stray click) leaves the guess.
+	if (!(map.k > 0.05 && map.k < 5)) return guess;
+	return map;
 }
 
 std::string TabLayout() {

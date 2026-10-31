@@ -4,6 +4,7 @@
 // pool of panels and shows every new layout in a panel not opened before.
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -65,14 +66,40 @@ std::vector<HitArea> TabHitAreas();
 // plugin panel gets no clicks at all, so the plugin matches them itself.
 std::vector<HitArea> WindowHitAreas(const PanelView& view);
 
-// A point of the window's client area (real pixels) in layout units. The game
-// lays its interface out on its own picture (`pictureW` x `pictureH`, the
-// overlay's screen size; 0 = the window's), which sits centred on the window
-// when the two differ: a game resolution below the window's size, or D2R VR's
-// render size. The interface is 3840 x 2160 units fitted into the picture.
+// The window's client area (real pixels) and layout units:
+// px = cx + x * k, py = top + y * k.
+struct ClickMap {
+	double k = 0, cx = 0, top = 0;
+};
 struct LayoutPoint {
 	int x, y;
 };
+struct PixelPoint {
+	double x, y;
+};
+LayoutPoint ToLayout(const ClickMap& map, double px, double py);
+PixelPoint FromLayout(const ClickMap& map, double x, double y);
+
+// The first guess: the game lays its interface out on its own picture
+// (`pictureW` x `pictureH`, the overlay's screen size; 0 = the window's),
+// centred on the window when the two differ (a game resolution below the
+// window's). The interface is 3840 x 2160 units fitted into the picture.
+ClickMap PictureMap(int windowW, int windowH, int pictureW, int pictureH);
 LayoutPoint ToLayout(double px, double py, int windowW, int windowH, int pictureW, int pictureH);
+
+// A press D2RLoader's window answered (its HOST GAME tab, CREATE GAME...): the
+// window pixel pressed and the middle of that button in layout units.
+struct ClickSample {
+	double px, py;
+	int x, y;
+};
+// Where the D2RLoader buttons whose presses teach the map are (their middles):
+// ShowHost, ShowBrowse, CreateGame, JoinDirect. Measured on flat games.
+std::optional<LayoutPoint> LoaderTarget(std::string_view command);
+// The map the presses on this window size show, `guess` until there are any.
+// The interface is a 16:9 box centred on the window (a flat game at a lower
+// resolution, D2R VR's picture): one press gives its scale; presses at two
+// heights give scale and top without that assumption.
+ClickMap LearnMap(const ClickMap& guess, int windowW, int windowH, const std::vector<ClickSample>& samples);
 
 }  // namespace rooms
