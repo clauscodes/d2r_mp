@@ -214,7 +214,8 @@ void TestLayout() {
 	view.slot = 0;
 
 	// Clicks are matched by the plugin: the close button, each Join, Refresh,
-	// Host Game and Browse Games, all inside the window's art.
+	// Host Game and Browse Games, all inside the window's art (the close
+	// button's area a little past its corner).
 	size_t joinAreas = 0;
 	bool close = false, refresh = false, host = false, browse = false, inside = true;
 	for (const HitArea& a : WindowHitAreas(view)) {
@@ -223,7 +224,8 @@ void TestLayout() {
 		refresh |= a.command == "Refresh";
 		host |= a.command == "ToHost";
 		browse |= a.command == "ToBrowse";
-		inside &= a.x >= -581 && a.x + a.width <= 581 && a.y >= 216 && a.y + a.height <= 216 + 1507;
+		const int margin = a.command == "Close" ? 40 : 0;
+		inside &= a.x >= -581 && a.x + a.width <= 581 && a.y >= 216 - margin && a.y + a.height <= 216 + 1507;
 	}
 	CHECK(joinAreas == std::min<size_t>(view.rooms.size(), kRowsPerPage) && close && refresh && host && browse);
 	CHECK(inside);
@@ -259,12 +261,16 @@ void TestToLayout() {
 	CHECK(onTab(ToLayout(1455, 367, 1920, 1920, 2734, 1538)));
 	// The same clicks measured against the window alone missed the button.
 	CHECK(!onTab(ToLayout(1512, 363, 2538, 1323, 0, 0)) && !onTab(ToLayout(1455, 367, 1920, 1920, 0, 0)));
-	// A square picture the window's size: the interface is the picture's width.
-	CHECK(near(ToLayout(960 + 695 * 0.5, 238 * 0.5, 1920, 1920, 0, 0), 695, 238));
+	// A square picture the window's size: the interface is the picture's width,
+	// centred on its height.
+	CHECK(near(ToLayout(960 + 695 * 0.5, 420 + 238 * 0.5, 1920, 1920, 0, 0), 695, 238));
 
-	// Learning from D2RLoader's own presses. D2R VR on the 1920x1920 window:
-	// a 16:9 box 0.71 px a unit, top at 193 px (the player's VR log).
-	const ClickMap vr {0.71, 960, 193};
+	// Learning from D2RLoader's own presses. D2R VR on the 1920x1920 window
+	// (the player's log, 2026-10-31): its picture, narrower than 16:9 and
+	// wider than the window, is stretched over the window, so the interface
+	// spans the window's width (0.5 px a unit across) and is 0.682 px a unit
+	// high, centred.
+	const ClickMap vr {0.5, 0.682, 960, 960 - 1080 * 0.682};
 	const auto press = [&](const char* command, int dx, int dy) {
 		const LayoutPoint t = *LoaderTarget(command);
 		const PixelPoint p = FromLayout(vr, t.x + dx, t.y + dy);
@@ -275,21 +281,43 @@ void TestToLayout() {
 	CHECK(!onTab(ToLayout(guess, button.x, button.y)));
 	CHECK(near(ToLayout(LearnMap(guess, 1920, 1920, {}), button.x, button.y), ToLayout(guess, button.x, button.y).x,
 	           ToLayout(guess, button.x, button.y).y));
+	// The player's own presses: BROWSE GAMES at 1031,457 and HOST GAME at
+	// 928,464 (his d2r-rooms-clicks.txt). Then his clicks aimed at the D2R
+	// Rooms button, which 0.9.9 (one scale for both axes) put left of it.
+	ClickMap learned = LearnMap(guess, 1920, 1920, {{1031, 457, 114, 342}, {928, 464, -125, 342}});
+	CHECK(std::abs(learned.kx - 0.5) < 0.001 && std::abs(learned.ky - 0.682) < 0.01 && std::abs(learned.top - 224) < 10);
+	const std::vector<std::pair<int, int>> aimed {{1259, 364}, {1246, 375}, {1237, 376}, {1229, 396}, {1223, 386}, {1262, 375},
+	                                              {1253, 392}, {1260, 366}, {1250, 377}, {1201, 368}, {1371, 376}};
+	for (const auto& [px, py] : aimed) CHECK(onTab(ToLayout(learned, px, py)));
+	// ...and at the D2R Rooms window's close button (1179,370) and its Refresh (1122,1278).
+	const PanelView shown;
+	const auto hit = [&](const char* command, int px, int py) {
+		const LayoutPoint p = ToLayout(learned, px, py);
+		for (const HitArea& a : WindowHitAreas(shown))
+			if (p.x >= a.x && p.x < a.x + a.width && p.y >= a.y && p.y < a.y + a.height) return a.command == command;
+		return false;
+	};
+	CHECK(hit("Close", 1179, 370) && hit("Refresh", 1122, 1278));
 	// One press on BROWSE GAMES, off its middle: the button is hit.
-	ClickMap learned = LearnMap(guess, 1920, 1920, {press("ShowBrowse", 80, -40)});
+	learned = LearnMap(guess, 1920, 1920, {press("ShowBrowse", 80, -40)});
 	CHECK(onTab(ToLayout(learned, button.x, button.y)));
-	CHECK(onTab(ToLayout(learned, button.x - 0.71 * 150, button.y + 0.71 * 30)));
-	// HOST GAME and CREATE GAME: two heights, scale and top measured.
+	CHECK(onTab(ToLayout(learned, button.x - 0.5 * 150, button.y + 0.682 * 30)));
+	// HOST GAME and CREATE GAME: two heights.
 	learned = LearnMap(guess, 1920, 1920, {press("ShowHost", -60, 30), press("CreateGame", 100, 20)});
-	CHECK(std::abs(learned.k - 0.71) < 0.05 && std::abs(learned.top - 193) < 40 && onTab(ToLayout(learned, button.x, button.y)));
+	CHECK(std::abs(learned.kx - 0.5) < 0.001 && std::abs(learned.ky - 0.682) < 0.05 && onTab(ToLayout(learned, button.x, button.y)));
 	// The flat 1366x768 game in its 2538x1323 window: a press keeps the right guess right.
 	const ClickMap flat = PictureMap(2538, 1323, 1366, 768);
 	const LayoutPoint host = *LoaderTarget("ShowHost");
 	const PixelPoint hp = FromLayout(flat, host.x, host.y + 20);
 	learned = LearnMap(flat, 2538, 1323, {{hp.x, hp.y, host.x, host.y}});
-	CHECK(std::abs(learned.k - flat.k) < 0.03 && onTab(ToLayout(learned, 1512, 363)));
+	CHECK(std::abs(learned.kx - flat.kx) < 0.03 && std::abs(learned.ky - flat.ky) < 0.03 && onTab(ToLayout(learned, 1512, 363)));
+	// A flat 16:9 window: a press off the tab's middle keeps one scale for both axes.
+	const ClickMap wide = PictureMap(1920, 1080, 0, 0);
+	const PixelPoint bp = FromLayout(wide, 114 + 60, 342 - 30);
+	learned = LearnMap(wide, 1920, 1080, {{bp.x, bp.y, 114, 342}});
+	CHECK(std::abs(learned.kx - learned.ky) < 0.001 && std::abs(learned.kx - 0.5) < 0.05);
 	// A stray press (the guess's middle row) leaves the guess.
-	CHECK(LearnMap(guess, 1920, 1920, {{960, 960, 114, 342}}).k == guess.k);
+	CHECK(LearnMap(guess, 1920, 1920, {{960, 960, 114, 342}}).ky == guess.ky);
 	// The window's own clicks go back to the same pixel.
 	const PixelPoint back = FromLayout(learned, 300, 900);
 	CHECK(near(ToLayout(learned, back.x, back.y), 300, 900));

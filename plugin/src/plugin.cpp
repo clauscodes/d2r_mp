@@ -666,8 +666,8 @@ void Learn(const std::string& command, const LayoutPoint& target, const Press& p
 	g_clickSamples.insert(g_clickSamples.end(), same.begin(), same.end());
 	SaveClickSamples();
 	const ClickMap map = CurrentMap(press.w, press.h);
-	Log("clicks: %s at %ld,%ld px (window %dx%d) -> %.3f px a unit, top %.0f px (%zu press(es))", command.c_str(), press.p.x, press.p.y, press.w,
-	    press.h, map.k, map.top, same.size());
+	Log("clicks: %s at %ld,%ld px (window %dx%d) -> %.3f x %.3f px a unit, top %.0f px (%zu press(es))", command.c_str(), press.p.x, press.p.y,
+	    press.w, press.h, map.kx, map.ky, map.top, same.size());
 }
 
 // A D2RLoader button message waiting for its press's release (its tabs answer
@@ -1468,8 +1468,8 @@ void HandleClick() {
 		HandleOwn(a.command, a.argument);
 		return;
 	}
-	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d, %.3f px a unit, top %.0f)", x, y, rc.right, rc.bottom, p.x, p.y, pictureW, pictureH,
-	    map.k, map.top);
+	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d, %.3f x %.3f px a unit, top %.0f)", x, y, rc.right, rc.bottom, p.x, p.y, pictureW,
+	    pictureH, map.kx, map.ky, map.top);
 }
 
 D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContext*, const D2RL::SharedEvents::UiMessageEvent* event, void*) noexcept {

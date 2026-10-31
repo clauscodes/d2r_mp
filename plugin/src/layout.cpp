@@ -225,25 +225,29 @@ std::string PanelLayout(const PanelView& view) {
 }
 
 std::vector<HitArea> TabHitAreas() {
-	// A little larger than the button: its sprite was measured from a screenshot.
-	return {{kTabX - 10, kTabY - 10, kButtonWidth + 20, kButtonHeight + 50, "Tab", ""}};
+	// Larger than the button: its sprite was measured from a screenshot, and a
+	// VR pointer's press lands a little beside where it aims (left of it, in the
+	// player's log). Left of the button is the empty title bar.
+	return {{kTabX - 80, kTabY - 10, kButtonWidth + 100, kButtonHeight + 50, "Tab", ""}};
 }
 
 std::vector<HitArea> WindowHitAreas(const PanelView& view) {
 	const int pages = PageCount(view.rooms.size());
-	std::vector<HitArea> areas {{kWindowLeft + kCloseX - 10, kWindowTop + kCloseY, 90, 80, "Close", ""}};
+	// The close button's area reaches past the art's corner: a VR pointer's
+	// press lands beside it (left of it and above, in the player's log).
+	std::vector<HitArea> areas {{kWindowLeft + kCloseX - 80, kWindowTop + kCloseY - 30, 160, 120, "Close", ""}};
 	for (const ButtonSpec& b : WindowButtons(view, pages, std::clamp(view.page, 0, pages - 1)))
 		areas.push_back({kWindowLeft + b.x, kWindowTop + b.y, kButtonWidth, kButtonHeight, b.command, b.argument});
 	return areas;
 }
 
 LayoutPoint ToLayout(const ClickMap& map, double px, double py) {
-	if (map.k <= 0) return {0, 0};
-	return {static_cast<int>(std::lround((px - map.cx) / map.k)), static_cast<int>(std::lround((py - map.top) / map.k))};
+	if (map.kx <= 0 || map.ky <= 0) return {0, 0};
+	return {static_cast<int>(std::lround((px - map.cx) / map.kx)), static_cast<int>(std::lround((py - map.top) / map.ky))};
 }
 
 PixelPoint FromLayout(const ClickMap& map, double x, double y) {
-	return {map.cx + x * map.k, map.top + y * map.k};
+	return {map.cx + x * map.kx, map.top + y * map.ky};
 }
 
 ClickMap PictureMap(int windowW, int windowH, int pictureW, int pictureH) {
@@ -251,7 +255,8 @@ ClickMap PictureMap(int windowW, int windowH, int pictureW, int pictureH) {
 		pictureW = windowW;
 		pictureH = windowH;
 	}
-	return {std::min(pictureW / 3840.0, pictureH / 2160.0), windowW / 2.0, (windowH - pictureH) / 2.0};
+	const double k = std::min(pictureW / 3840.0, pictureH / 2160.0);
+	return {k, k, windowW / 2.0, windowH / 2.0 - 1080 * k};
 }
 
 LayoutPoint ToLayout(double px, double py, int windowW, int windowH, int pictureW, int pictureH) {
@@ -269,42 +274,20 @@ std::optional<LayoutPoint> LoaderTarget(std::string_view command) {
 }
 
 ClickMap LearnMap(const ClickMap& guess, int windowW, int windowH, const std::vector<ClickSample>& samples) {
-	if (samples.empty() || windowW <= 0 || windowH <= 0) return guess;
-	ClickMap map {0, windowW / 2.0, 0};
-	int lo = samples[0].y, hi = samples[0].y;
-	for (const ClickSample& s : samples) {
-		lo = std::min(lo, s.y);
-		hi = std::max(hi, s.y);
-	}
-	if (hi - lo >= 400) {
-		// Two heights: py = top + y * k by least squares.
-		double my = 0, mp = 0;
-		for (const ClickSample& s : samples) {
-			my += s.y;
-			mp += s.py;
-		}
-		my /= samples.size();
-		mp /= samples.size();
-		double cov = 0, var = 0;
-		for (const ClickSample& s : samples) {
-			cov += (s.y - my) * (s.py - mp);
-			var += (s.y - my) * (s.y - my);
-		}
-		map.k = cov / var;
-		map.top = mp - map.k * my;
-	} else {
-		// One height: the box centred on the window, its scale from each press.
-		std::vector<double> ks;
-		for (const ClickSample& s : samples)
-			if (std::abs(1080 - s.y) >= 300) ks.push_back((windowH / 2.0 - s.py) / (1080.0 - s.y));
-		if (ks.empty()) return guess;
-		std::sort(ks.begin(), ks.end());
-		map.k = ks[ks.size() / 2];
-		map.top = windowH / 2.0 - 1080 * map.k;
-	}
+	if (samples.empty() || windowW <= 0 || windowH <= 0 || guess.kx <= 0 || guess.ky <= 0) return guess;
+	// The height: each press's scale about the window's middle row.
+	std::vector<double> ks;
+	for (const ClickSample& s : samples)
+		if (std::abs(1080 - s.y) >= 300) ks.push_back((windowH / 2.0 - s.py) / (1080.0 - s.y));
+	if (ks.empty()) return guess;
+	std::sort(ks.begin(), ks.end());
+	const double ky = ks[ks.size() / 2];
 	// A press far from where it was taken for (a stray click) leaves the guess.
-	if (!(map.k > 0.05 && map.k < 5)) return guess;
-	return map;
+	if (!(ky > 0.05 && ky < 5)) return guess;
+	// The width: the guess's shape, unless the box is clearly taller than the
+	// guess (a press is anywhere on a tab, some 8% of the height either way).
+	const double kx = ky > guess.ky * 1.15 ? windowW / 3840.0 : guess.kx * ky / guess.ky;
+	return {kx, ky, windowW / 2.0, windowH / 2.0 - 1080 * ky};
 }
 
 std::string TabLayout() {

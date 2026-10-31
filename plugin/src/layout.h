@@ -67,9 +67,11 @@ std::vector<HitArea> TabHitAreas();
 std::vector<HitArea> WindowHitAreas(const PanelView& view);
 
 // The window's client area (real pixels) and layout units:
-// px = cx + x * k, py = top + y * k.
+// px = cx + x * kx, py = top + y * ky. The two scales differ when the game's
+// picture is stretched over the window (D2R VR's render size: the game's
+// cursor is the window's, scaled on each axis to the picture).
 struct ClickMap {
-	double k = 0, cx = 0, top = 0;
+	double kx = 0, ky = 0, cx = 0, top = 0;
 };
 struct LayoutPoint {
 	int x, y;
@@ -83,7 +85,8 @@ PixelPoint FromLayout(const ClickMap& map, double x, double y);
 // The first guess: the game lays its interface out on its own picture
 // (`pictureW` x `pictureH`, the overlay's screen size; 0 = the window's),
 // centred on the window when the two differ (a game resolution below the
-// window's). The interface is 3840 x 2160 units fitted into the picture.
+// window's). The interface is 3840 x 2160 units fitted into the picture and
+// centred on it.
 ClickMap PictureMap(int windowW, int windowH, int pictureW, int pictureH);
 LayoutPoint ToLayout(double px, double py, int windowW, int windowH, int pictureW, int pictureH);
 
@@ -97,9 +100,12 @@ struct ClickSample {
 // ShowHost, ShowBrowse, CreateGame, JoinDirect. Measured on flat games.
 std::optional<LayoutPoint> LoaderTarget(std::string_view command);
 // The map the presses on this window size show, `guess` until there are any.
-// The interface is a 16:9 box centred on the window (a flat game at a lower
-// resolution, D2R VR's picture): one press gives its scale; presses at two
-// heights give scale and top without that assumption.
+// The interface is a box centred on the window. The presses give its height
+// (D2RLoader's buttons are far from the middle row, near it horizontally);
+// its width is the guess's shape when the height is the guess's, and the
+// window's whole width when it is taller than the guess: the picture is
+// stretched over the window (D2R VR), and the interface spans a picture
+// narrower than 16:9 from side to side.
 ClickMap LearnMap(const ClickMap& guess, int windowW, int windowH, const std::vector<ClickSample>& samples);
 
 }  // namespace rooms
