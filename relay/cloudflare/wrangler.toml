@@ -28,6 +28,10 @@ NEAR_LIMIT = "0.8"
 FREE_SHARE = "0.9"
 # "0" = maintenance: no new rooms or joiners, running games go on.
 RELAY_OPEN = "1"
+# The outgoing bridge (relay/PROTOCOL.md §6): a joiner whose ISP blocks a
+# host's open port reaches it through here. "0" = off. Only these ports.
+BRIDGE = "1"
+BRIDGE_PORTS = "4000"
 
 [[durable_objects.bindings]]
 name = "ROOMS"
@@ -37,9 +41,17 @@ class_name = "RoomRelay"
 name = "BUDGET"
 class_name = "Budget"
 
+[[durable_objects.bindings]]
+name = "BRIDGES"
+class_name = "Bridge"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RoomRelay", "Budget"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Bridge"]
 
 [observability]
 enabled = false

@@ -3,14 +3,16 @@
 // Durable Object, which pipes the bytes. Secrets reach the object only as
 // SHA-256 hashes.
 
+import { Bridge, bridgePorts, bridgeTarget } from "./bridge";
 import { Budget, BudgetView } from "./budget";
 import { MAX_MESSAGE, PIPES, RoomRelay, VERSION, refusal } from "./room";
 
-export { Budget, RoomRelay };
+export { Bridge, Budget, RoomRelay };
 
 export interface Env {
   ROOMS: DurableObjectNamespace<RoomRelay>;
   BUDGET: DurableObjectNamespace<Budget>;
+  BRIDGES: DurableObjectNamespace<Bridge>;
   RELAY_NAME?: string;
   /** Secret: comma-separated keys a host must send. Unset = open to every host. */
   RELAY_KEYS?: string;
@@ -20,9 +22,16 @@ export interface Env {
   NEAR_LIMIT?: string;
   FREE_SHARE?: string;
   RELAY_OPEN?: string;
+  /** "0" = no outgoing bridge (PROTOCOL.md §6). */
+  BRIDGE?: string;
+  /** The ports a bridge may reach, comma-separated: the game's. */
+  BRIDGE_PORTS?: string;
+  /** "1" in tests only: private and loopback addresses too. */
+  BRIDGE_ALLOW_PRIVATE?: string;
 }
 
 const ROOM_PATH = /^\/v1\/rooms\/([A-Za-z0-9_-]{16,64})\/(host|join)$/;
+const BRIDGE_PATH = /^\/v1\/bridge\/([0-9A-Fa-f.:]{2,39})\/([0-9]{1,5})$/;
 const TOKEN = /^[A-Za-z0-9_-]{16,128}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const HEALTH_CACHE_MS = 30 * 1000;
@@ -60,10 +69,25 @@ async function route(req: Request, env: Env): Promise<Response> {
     const body = {
       ok: true, relay: VERSION, name: env.RELAY_NAME ?? "D2R Rooms relay",
       status: view.status, open: view.status !== "limit", usage: view.usage, pipes: PIPES, max_message: MAX_MESSAGE,
+      bridge: env.BRIDGE !== "0", ...(env.BRIDGE !== "0" ? { bridge_ports: bridgePorts(env.BRIDGE_PORTS) } : {}),
     };
     return new Response(JSON.stringify(body), {
       headers: { "content-type": "application/json", "cache-control": "no-store", "access-control-allow-origin": "*" },
     });
+  }
+
+  const b = path.match(BRIDGE_PATH);
+  if (b && env.BRIDGE !== "0") {
+    if ((req.headers.get("upgrade") ?? "").toLowerCase() !== "websocket") return refusal(426, "upgrade_required");
+    const target = bridgeTarget(b[1], b[2], bridgePorts(env.BRIDGE_PORTS), env.BRIDGE_ALLOW_PRIVATE === "1");
+    if (typeof target === "string") return refusal(400, target);
+    // A bridge is a new pipe: refused at the limit, like a joiner.
+    if ((await budgetView(env)).status === "limit") return refusal(503, "over_budget");
+    // A fresh object near the joiner for each connection.
+    const bridge = env.BRIDGES.get(env.BRIDGES.newUniqueId());
+    return bridge.fetch(new Request(req.url, {
+      headers: { upgrade: "websocket", "x-bridge-host": target.hostname, "x-bridge-port": String(target.port) },
+    }));
   }
 
   const m = path.match(ROOM_PATH);

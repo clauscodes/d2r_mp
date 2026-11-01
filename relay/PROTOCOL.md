@@ -24,6 +24,7 @@ All on one origin (`https://relay.example` / `wss://relay.example`). `ws://` is 
 | `GET /healthz` | `200 {"ok":true,"relay":1,"name":"…","status":"active","open":true,"usage":0.12,"pipes":7,"max_message":65536}`: the relay's status (§1.1). Clients use it to pick a relay and to show its state. |
 | `GET /v1/rooms/{room}/host` + WebSocket upgrade | the host's socket for room `{room}` |
 | `GET /v1/rooms/{room}/join` + WebSocket upgrade | one joiner's socket: one pipe |
+| `GET /v1/bridge/{address}/{port}` + WebSocket upgrade | optional: a joiner's socket to a host's own address (§6) |
 
 `{room}` is `[A-Za-z0-9_-]{16,64}`, chosen by the host's client at random (at least 128 bits). The relay keeps no list
 of rooms anyone can read.
@@ -63,10 +64,12 @@ Before the upgrade the relay answers a plain HTTP status with `{"error": "<code>
 | 403 | `bad_join_key` | the join key does not match the room |
 | 404 | `no_room` | no host socket is connected for this room (join only) |
 | 404 | `not_found` | any other path |
+| 400 | `bad_address`, `bad_port` | a bridge to an address that is not public, or to a port the relay does not bridge (§6) |
 | 409 | `room_full` | the room already has `pipes` open pipes |
 | 426 | `upgrade_required` | a room path without a WebSocket upgrade |
 | 503 | `near_limit` | the relay takes no new rooms right now (host only, status `near_limit` or `limit`) |
-| 503 | `over_budget` | the relay refuses new pipes right now (join only, status `limit`; running pipes go on) |
+| 502 | `unreachable` | a bridge: the relay could not connect to the host's address either (§6) |
+| 503 | `over_budget` | the relay refuses new pipes right now (join and bridge, status `limit`; running pipes go on) |
 
 A client that gets `over_budget`, `no_room` or no answer falls back to the host's own address.
 
@@ -133,3 +136,21 @@ byte 2..   payload
 
 The path carries the version (`/v1/`). A client reads `relay` from `/healthz` and `v` from `hello`. New text messages
 and new `hello` fields may be added within v1; anything that changes the frames goes to `/v2/`.
+
+## 6. The outgoing bridge (optional)
+
+A host whose port is open may still be out of a joiner's reach: the joiner's ISP drops that address. The bridge lets
+the joiner reach the host's own open port through the relay; the host needs nothing (no relay, no plugin change). It
+does not help a host whose port is closed: that host needs a room on a relay (§1–§3).
+
+- A relay that bridges says so in `/healthz`: `"bridge": true, "bridge_ports": [4000]`. A relay without it answers the
+  path `404 not_found`, and the client tries its next relay.
+- `GET /v1/bridge/{address}/{port}` + WebSocket upgrade. `{address}` is an IPv4 or IPv6 literal (no name), public (no
+  private, loopback, link-local, carrier-grade NAT or multicast range); `{port}` is one of `bridge_ports` (the game's).
+  No headers: anyone may bridge to a public address on the game's port, and nothing else.
+- The relay connects to the address before it upgrades. Within 8 s it answers `502 unreachable` when it cannot, and
+  `101` when it can; then it sends `{"t":"hello","v":1,"bridge":true,"max_message":65536}`.
+- Binary messages are the game's bytes, unframed, both ways, as on a join socket. Pings as in §2. Either side closing
+  ends the other: the relay closes the WebSocket (1000, `host closed`) when the host's TCP connection ends, and the TCP
+  connection when the WebSocket closes.
+- Limits as for a pipe (§4); a bridge is a new pipe for the status: refused with `503 over_budget` at `limit`.

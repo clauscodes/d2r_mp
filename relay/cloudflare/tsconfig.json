@@ -9,5 +9,7 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test"],
+  // Runs in Node (vitest globalSetup), not in the Workers runtime.
+  "exclude": ["test/game_server.ts"]
 }

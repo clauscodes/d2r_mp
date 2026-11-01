@@ -3,7 +3,9 @@
 
 import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { bridgePorts, bridgeTarget } from "../src/bridge";
 import { Settings, paidUsd, settings, status, usage } from "../src/cost";
+import { GAME_PORT } from "./game_port";
 
 const PAID: Settings = { plan: "paid", budgetUsd: 10, planBaseUsd: 5, nearLimit: 0.8, freeShare: 0.9, open: true };
 const ZERO = { requests: 0, awakeSeconds: 0 };
@@ -121,5 +123,64 @@ describe("relay", () => {
     const joiner2Closed = closeCode(joiner2);
     host2.close();
     expect(await joiner2Closed).toBe(1001);
+  });
+});
+
+describe("bridge", () => {
+  it("takes only public addresses and the game's ports", () => {
+    const ports = bridgePorts("4000");
+    expect(bridgeTarget("188.234.245.4", "4000", ports)).toEqual({ hostname: "188.234.245.4", port: 4000 });
+    expect(bridgeTarget("2a01:4f8:c17:1::1", "4000", ports)).toEqual({ hostname: "2a01:4f8:c17:1::1", port: 4000 });
+    expect(bridgeTarget("188.234.245.4", "22", ports)).toBe("bad_port");
+    expect(bridgeTarget("188.234.245.4", "40000", ports)).toBe("bad_port");
+    for (const a of ["127.0.0.1", "10.8.0.1", "192.168.1.5", "172.20.0.1", "100.64.3.4", "169.254.1.1", "0.0.0.0", "224.0.0.1",
+      "::1", "::", "fe80::1", "fd00::5", "::ffff:8.8.8.8", "256.1.1.1", "1.2.3", "01.2.3.4", "example.com", "1:2:3:4:5:6:7:8:9"])
+      expect(bridgeTarget(a, "4000", ports), a).toBe("bad_address");
+    expect(bridgeTarget("127.0.0.1", "4000", ports, true)).toEqual({ hostname: "127.0.0.1", port: 4000 });
+    expect(bridgePorts(" 4000, 4001,x,70000")).toEqual([4000, 4001]);
+    expect(bridgePorts("")).toEqual([4000]);
+  });
+
+  it("says so in /healthz", async () => {
+    const h = await (await exports.default.fetch("http://relay/healthz")).json<Record<string, unknown>>();
+    expect(h).toMatchObject({ bridge: true, bridge_ports: [4000, GAME_PORT] });
+  });
+
+  it("refuses what it may not reach", async () => {
+    const ask = (path: string, upgrade = true) =>
+      exports.default.fetch(`http://relay/v1/bridge/${path}`, { headers: upgrade ? { upgrade: "websocket" } : {} });
+    expect((await ask("188.234.245.4/22")).status).toBe(400);
+    expect((await ask(`127.0.0.1/${GAME_PORT}`, false)).status).toBe(426);
+    // Nobody listens on 4000 here: the host cannot be reached, said before the upgrade.
+    const res = await ask("127.0.0.1/4000");
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "unreachable" });
+  });
+
+  it("pipes a joiner to the host's own port", async () => {
+    const res = await exports.default.fetch(`http://relay/v1/bridge/127.0.0.1/${GAME_PORT}`, { headers: { upgrade: "websocket" } });
+    expect(res.status).toBe(101);
+    const ws = res.webSocket!;
+    const got: (string | Uint8Array)[] = [];
+    let wake: () => void = () => {};
+    ws.addEventListener("message", async (e) => {
+      const d = e.data as string | ArrayBuffer | Blob;
+      got.push(typeof d === "string" ? d : new Uint8Array(d instanceof Blob ? await d.arrayBuffer() : d));
+      wake();
+    });
+    ws.accept();
+    const until = async (ok: () => boolean) => {
+      while (!ok()) await new Promise<void>((r) => { wake = r; setTimeout(r, 200); });
+    };
+    const bytes = () => new TextDecoder().decode(Uint8Array.from(got.filter((m) => typeof m !== "string").flatMap((m) => [...(m as Uint8Array)])));
+    await until(() => got.length > 0);
+    expect(JSON.parse(got[0] as string)).toMatchObject({ t: "hello", v: 1, bridge: true });
+    // The host speaks first, then echoes.
+    await until(() => bytes() === "hi");
+    ws.send(new TextEncoder().encode("join"));
+    await until(() => bytes() === "hijoin");
+    ws.send('{"t":"ping"}');
+    await until(() => got.includes('{"t":"pong"}'));
+    ws.close(1000, "done");
   });
 });

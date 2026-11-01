@@ -28,7 +28,7 @@ interface Claim {
 
 type Attachment = { role: "host" } | { role: "join"; pipe: number; byHost?: boolean };
 
-class Bucket {
+export class Bucket {
   private tokens = BURST;
   private stamp = Date.now();
   take(n: number): boolean {
