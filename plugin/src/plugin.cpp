@@ -1761,17 +1761,21 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 		return false;
 	}
 
-	char server[512] {};
-	if (GetEnvironmentVariableA("D2R_ROOMS_SERVER", server, sizeof(server)) > 0 && std::strncmp(server, "https://", 8) == 0)
-		g_server = server;
 	if (!Query(g_overlay, D2RL::OverlayServiceRequiredSize, D2RL::HasOverlayServiceField)) g_overlay = nullptr;
 	g_mod = g_cmdMod = DetectMod(GetCommandLineA());
-	Log("d2r-rooms %s: server %s, mod %s", kInfo.version, g_server.c_str(), ModLabel(g_mod).c_str());
 
 	// Relays: d2r-rooms.ini beside the DLL, written with ours when missing.
 	g_gameDir = ExeDir();
 	net::StartNetworking();
 	LoadRelayConfig();
+	// The rooms server: D2R_ROOMS_SERVER (tests), else the ini's [board] url (a
+	// group's own board, docs/SELF_HOST.md), else ours. Set once, before any request.
+	char server[512] {};
+	if (GetEnvironmentVariableA("D2R_ROOMS_SERVER", server, sizeof(server)) > 0 && std::strncmp(server, "https://", 8) == 0)
+		g_server = server;
+	else if (!g_relayCfg.boardUrl.empty())
+		g_server = g_relayCfg.boardUrl;
+	Log("d2r-rooms %s: server %s, mod %s", kInfo.version, g_server.c_str(), ModLabel(g_mod).c_str());
 	LoadClickSamples();
 	for (const RelayServer& r : g_relayCfg.relays) Log("relay: %s = %s%s", r.name.c_str(), r.url.c_str(), r.key.empty() ? "" : " (with a key)");
 	Log("command line: %s", GetCommandLineA());  // does D2RLoader's -mod reach D2R.exe?

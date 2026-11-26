@@ -267,6 +267,8 @@ describe("page", () => {
     const html = await page.text();
     expect(html).toContain("<title>D2R Rooms</title>");
     expect(html).not.toContain("${");
+    expect(html).toContain('href="https://github.com/clauscodes/d2r_mp/blob/main/docs/SELF_HOST.md"');
+    expect(html).toContain(">Run your own server</a>");
     expect((await call("GET", "/healthz")).json).toEqual({ ok: true });
     expect((await call("GET", "/nope")).status).toBe(404);
     expect((await call("PUT", "/api/rooms")).status).toBe(404);

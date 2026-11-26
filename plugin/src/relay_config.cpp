@@ -63,7 +63,12 @@ std::string DefaultRelayIni() {
 		"; The key is only for a private relay; its owner gives it to you.\n"
 		"; When you host, the first relay that answers and takes new rooms is used.\n"
 		"; When you join, the plugin uses the relay the host's room names.\n") +
-		kDefaultRelayName + " = " + kDefaultRelayUrl + "\n";
+		kDefaultRelayName + " = " + kDefaultRelayUrl + "\n"
+		"\n"
+		"[board]\n"
+		"; url = your group's own rooms server (https://...), read when the game starts.\n"
+		"; Empty = the public D2R Rooms list. Guide: docs/SELF_HOST.md in the D2R Rooms repository.\n"
+		"url =\n";
 }
 
 RelayConfig ParseRelayIni(std::string_view text) {
@@ -90,6 +95,10 @@ RelayConfig ParseRelayIni(std::string_view text) {
 			if (v == "always") cfg.mode = RelayMode::Always;
 			else if (v == "never") cfg.mode = RelayMode::Never;
 			else cfg.mode = RelayMode::Auto;
+		} else if (section == "board" && Lower(name) == "url") {
+			std::string url(value);
+			while (!url.empty() && url.back() == '/') url.pop_back();
+			if (Lower(url).starts_with("https://") && url.size() > 8 && url.find_first_of(" \t") == std::string::npos) cfg.boardUrl = url;
 		} else if (section == "relays" && !name.empty()) {
 			const size_t space = value.find_first_of(" \t");
 			std::string url(Trim(value.substr(0, space)));

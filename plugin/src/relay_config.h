@@ -33,11 +33,13 @@ struct RelayConfig {
 	RelayMode mode = RelayMode::Auto;
 	std::string use;                  // the relay to host on, by name; "" = the first that answers
 	std::vector<RelayServer> relays;  // in the player's order; never empty after parsing
+	std::string boardUrl;             // [board] url: a group's own rooms server; "" = ours
 };
 
 // The file written when there is none: ours first, comments on how to add more.
 std::string DefaultRelayIni();
-// Unknown lines are skipped; no [relays] entry at all gives ours alone.
+// Unknown lines are skipped; no [relays] entry at all gives ours alone. [board]
+// url must be https://, kept without a trailing slash.
 RelayConfig ParseRelayIni(std::string_view text);
 const char* RelayModeName(RelayMode mode);
 // The relays in the order a host tries them: `use` first, then the rest.

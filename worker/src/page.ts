@@ -2,6 +2,9 @@
 // characters and levels. Rooms are created and joined from the game by the
 // D2R Rooms plugin (a room may go through a relay, which only the plugin can use).
 
+// "Run your own server": the step-by-step guide on GitHub (a group's own free board).
+export const SELF_HOST_GUIDE = "https://github.com/clauscodes/d2r_mp/blob/main/docs/SELF_HOST.md";
+
 export const PAGE = /* html */ `<!doctype html>
 <html lang="en">
 <head>
@@ -48,6 +51,8 @@ table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px
 td { padding: 4px 6px 4px 0; border-top: 1px solid var(--line); vertical-align: top; }
 td.r { text-align: right; white-space: nowrap; }
 .empty { color: var(--muted); text-align: center; padding: 28px 0; }
+a.own { color: var(--accent); font-weight: 600; text-decoration: none; padding: 7px 4px; }
+a.own:hover, a.own:focus-visible { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -63,6 +68,7 @@ td.r { text-align: right; white-space: nowrap; }
       <option value="">All difficulties</option><option>normal</option><option>nightmare</option><option>hell</option>
     </select>
     <span class="grow"></span>
+    <a class="own" href="${SELF_HOST_GUIDE}" target="_blank" rel="noopener" title="A free room list of your own on Cloudflare, for your group">Run your own server</a>
     <button id="refresh" type="button">Refresh</button>
   </div>
   <div id="rooms"><div class="empty">Loading&hellip;</div></div>

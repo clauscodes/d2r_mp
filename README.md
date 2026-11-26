@@ -9,11 +9,13 @@ both PCs dial out, nobody touches a router ([relay/](relay/README.md), guide for
 running your own: [docs/host_a_relay.md](docs/host_a_relay.md)).
 
 Runs free on Cloudflare Workers + D1. Design: [SPEC.md](SPEC.md).
+**Run your own server** for your group, free, in about 15 minutes:
+[docs/SELF_HOST.md](docs/SELF_HOST.md).
 
 ## Install the plugin (players)
 
 **Download: [d2rl-d2r-rooms.dll](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll)**
-(plugin 0.9.11, Windows x64, [SHA-256](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll.sha256);
+(plugin 0.9.12, Windows x64, [SHA-256](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll.sha256);
 sample settings: [d2r-rooms.ini](https://github.com/clauscodes/d2r_mp/raw/main/download/d2r-rooms.ini)).
 Open rooms: <https://d2r-rooms.d2r-rooms.workers.dev/>.
 
@@ -34,6 +36,8 @@ Open rooms: <https://d2r-rooms.d2r-rooms.workers.dev/>.
   only when D2RLoader reports that your port cannot be reached from outside;
   `always` hosts every room through a relay; `never` never does. `enabled = no`
   turns the plugin's part of *CREATE GAME* off.
+- **Your group's own list:** `url = https://...` in the `[board]` section of
+  `d2r-rooms.ini` (restart the game). How to run one: [docs/SELF_HOST.md](docs/SELF_HOST.md).
 - **Everyone in one game needs the same game version and the same VR mod version**
   (or no mod for all); otherwise D2R says *Game Data Does Not Match*. The rooms list
   shows each room's VR version.

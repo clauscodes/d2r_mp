@@ -86,6 +86,9 @@ UPnP / PCP / NAT-PMP could not open the router), the room goes through a relay
   that answers); one `name = wss://address [key]` line per relay. Read again on
   every CREATE GAME, so a change made while the game runs counts for the next
   room. Guide: [docs/host_a_relay.md](../docs/host_a_relay.md).
+  `[board] url = https://...` is a group's own rooms server instead of ours
+  (read once when the game starts; `D2R_ROOMS_SERVER` in the environment still
+  wins, for tests). Guide: [docs/SELF_HOST.md](../docs/SELF_HOST.md).
 - **Status file:** `d2rloader/plugins/d2r-rooms-status.json`, rewritten with every
   change while the game runs: the plugin's version, the bridge's settings, each
   relay's state and `usage` (0..1 of its quota, from `/healthz`), the room being

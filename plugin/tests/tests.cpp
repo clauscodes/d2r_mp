@@ -425,6 +425,16 @@ void TestRelay() {
 	CHECK(cfg.relays[2].url == "ws://127.0.0.1:8080");
 	CHECK(ParseRelayIni("[relay]\nmode=never\n").mode == RelayMode::Never);
 
+	// [board] url: a group's own rooms server (docs/SELF_HOST.md); empty or bad = ours.
+	CHECK(ParseRelayIni(DefaultRelayIni()).boardUrl.empty());
+	CHECK(ParseRelayIni("").boardUrl.empty());
+	CHECK(ParseRelayIni("[board]\r\nURL = https://rooms.friends.workers.dev/ \r\n").boardUrl == "https://rooms.friends.workers.dev");
+	CHECK(ParseRelayIni("[board]\nurl = http://rooms.friends.net\n").boardUrl.empty());
+	CHECK(ParseRelayIni("[board]\nurl = https://\n").boardUrl.empty());
+	CHECK(ParseRelayIni("[board]\nurl = https://a.net b\n").boardUrl.empty());
+	CHECK(ParseRelayIni("[relay]\nurl = https://a.net\n").boardUrl.empty());
+	CHECK(ParseRelayIni(DefaultRelayIni() + "[board]\nurl = https://a.net\n").relays.size() == 1);
+
 	// The bridge on or off, and the relay chosen to host on.
 	CHECK(ParseRelayIni("").enabled && ParseRelayIni(DefaultRelayIni()).enabled && ParseRelayIni(DefaultRelayIni()).use.empty());
 	CHECK(!ParseRelayIni("[relay]\nenabled = no\n").enabled && !ParseRelayIni("[relay]\r\nEnabled=Off\r\n").enabled);
