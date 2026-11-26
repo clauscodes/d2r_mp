@@ -82,6 +82,8 @@ D2RL::Resources::RegistrationHandle g_tabLayout = D2RL::Resources::InvalidHandle
 
 std::string g_server = kDefaultServer;
 Mod g_mod;
+Mod g_cmdMod;  // from the game's -mod alone; ResolveMod adds d2rloader.log
+bool g_modResolved = false;
 
 // Shared between the UI thread, HTTP callbacks and the heartbeat thread.
 std::mutex g_mu;
@@ -200,12 +202,18 @@ std::string LoaderLog() {
 	return g_gameDir + "d2rloader\\logs\\d2rloader.log";
 }
 
-// The mod's plugin version (D2R VR 0.189.0) from D2RLoader's startup lines,
-// read once it is there: the board shows it, and joining needs the same one.
+// The mod and its plugin version (D2R VR 0.225.0 by natpoh) from D2RLoader's
+// startup lines, read once they are there: the board shows them, and joining
+// needs the same version. A default-mod start has no -mod; the line names it.
 void ReadModVersion() {
-	if (!g_mod.version.empty()) return;
-	g_mod.version = ModPluginVersion(ReadText(LoaderLog()));
-	if (!g_mod.version.empty()) Log("mod: %s", ModLabel(g_mod).c_str());
+	if (g_modResolved) return;
+	const std::string log = ReadText(LoaderLog());
+	if (ModPlugins(log).empty() && log.find("[DONE]") == std::string::npos) return;  // not listed yet
+	const Mod mod = ResolveMod(g_cmdMod, log);
+	g_modResolved = true;
+	if (mod.id != g_mod.id || mod.version != g_mod.version)
+		Log("mod: %s (command line: %s)", ModLabel(mod).c_str(), ModLabel(g_cmdMod).c_str());
+	g_mod = mod;
 }
 
 // --- threads ------------------------------------------------------------
@@ -1757,7 +1765,7 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	if (GetEnvironmentVariableA("D2R_ROOMS_SERVER", server, sizeof(server)) > 0 && std::strncmp(server, "https://", 8) == 0)
 		g_server = server;
 	if (!Query(g_overlay, D2RL::OverlayServiceRequiredSize, D2RL::HasOverlayServiceField)) g_overlay = nullptr;
-	g_mod = DetectMod(GetCommandLineA());
+	g_mod = g_cmdMod = DetectMod(GetCommandLineA());
 	Log("d2r-rooms %s: server %s, mod %s", kInfo.version, g_server.c_str(), ModLabel(g_mod).c_str());
 
 	// Relays: d2r-rooms.ini beside the DLL, written with ours when missing.

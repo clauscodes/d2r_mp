@@ -27,6 +27,44 @@ Mod ReadMod(const json::Value& v) {
 	return m;
 }
 
+// A mod name as a board id: "D2R-VR" -> "d2r-vr", "My Mod_2" -> "mymod2"; "" when nothing is left.
+std::string ModSlug(std::string_view name) {
+	std::string id;
+	for (const char c : Lower(name))
+		if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') id += c;
+	return id.substr(0, 32);
+}
+
+std::string_view Trim(std::string_view s) {
+	while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
+	while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r')) s.remove_suffix(1);
+	return s;
+}
+
+// The mod D2RLoader runs, from its "Active mod:" table ("| name | D2R-PCVR |"):
+// it is there also when the player set a default mod and gave no -mod.
+std::string ActiveModName(std::string_view loaderLog) {
+	const size_t table = loaderLog.find("Active mod:");
+	if (table == std::string_view::npos) return {};
+	size_t at = table;
+	for (int lines = 0; lines < 8; ++lines) {
+		const size_t next = loaderLog.find('\n', at);
+		if (next == std::string_view::npos) break;
+		at = next + 1;
+		const std::string_view line = loaderLog.substr(at, std::min(loaderLog.find('\n', at), loaderLog.size()) - at);
+		const size_t bar = line.find('|');
+		if (bar == std::string_view::npos) continue;
+		std::string_view cells = line.substr(bar + 1);
+		const size_t mid = cells.find('|');
+		if (mid == std::string_view::npos || Trim(cells.substr(0, mid)) != "name") continue;
+		cells = cells.substr(mid + 1);
+		const std::string_view value = Trim(cells.substr(0, cells.find('|')));
+		if (value.empty() || value == "null" || value.front() == '<') return {};
+		return std::string(value);
+	}
+	return {};
+}
+
 }  // namespace
 
 Mod DetectMod(std::string_view commandLine) {
@@ -48,36 +86,69 @@ Mod DetectMod(std::string_view commandLine) {
 	Mod mod;
 	for (size_t i = 0; i + 1 < tokens.size(); ++i) {
 		if (Lower(tokens[i]) != "-mod") continue;
-		const std::string name = Lower(tokens[i + 1]);
-		if (name == "d2r-vr") mod.id = "d2r-vr";
-		else if (name == "d2r-pcvr") mod.id = "d2r-pcvr";
-		else {
-			std::string id;
-			for (const char c : name)
-				if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') id += c;
-			mod.id = id.empty() ? "none" : id.substr(0, 32);
-		}
+		const std::string id = ModSlug(tokens[i + 1]);
+		mod.id = id.empty() ? "none" : id;
 	}
 	return mod;
 }
 
-std::string ModPluginVersion(std::string_view loaderLog) {
-	std::string version;
+std::vector<ModPlugin> ModPlugins(std::string_view loaderLog) {
+	std::vector<ModPlugin> out;
 	size_t at = 0;
 	while ((at = loaderLog.find("[PLUGIN]", at)) != std::string_view::npos) {
 		const size_t end = std::min(loaderLog.find('\n', at), loaderLog.size());
-		std::string_view line = loaderLog.substr(at + 8, end - at - 8);
+		std::string_view line = Trim(loaderLog.substr(at + 8, end - at - 8));
 		at = end;
-		while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
-		if (!line.ends_with("[mod]")) continue;
+		if (!line.ends_with("[mod]")) continue;  // [global] plugins are not the mod's
+		line = Trim(line.substr(0, line.size() - 5));
 		const size_t by = line.rfind(" by ");
 		if (by == std::string_view::npos) continue;
-		line = line.substr(0, by);
+		ModPlugin p;
+		p.author = std::string(Trim(line.substr(by + 4)));
+		line = Trim(line.substr(0, by));
 		const size_t space = line.rfind(' ');
-		const std::string_view v = space == std::string_view::npos ? line : line.substr(space + 1);
-		if (!v.empty() && v.size() <= 24 && v[0] >= '0' && v[0] <= '9') version = std::string(v);
+		if (space == std::string_view::npos) continue;
+		const std::string_view v = line.substr(space + 1);
+		if (v.empty() || v.size() > 24 || v[0] < '0' || v[0] > '9') continue;
+		p.version = std::string(v);
+		p.name = std::string(Trim(line.substr(0, space)));
+		if (!p.name.empty()) out.push_back(std::move(p));
 	}
-	return version;
+	return out;
+}
+
+std::string VrModId(const ModPlugin& plugin) {
+	const std::string name = Lower(plugin.name), author = Lower(plugin.author);
+	if (name == "d2r vr" && author == "natpoh") return "d2r-vr";
+	if (name == "d2r pcvr") return "d2r-pcvr";  // Unleashed's plugin since 0.3.16
+	return {};
+}
+
+Mod ResolveMod(const Mod& fromCommandLine, std::string_view loaderLog) {
+	const std::vector<ModPlugin> plugins = ModPlugins(loaderLog);
+
+	// A VR mod's own plugin line names the mod, whatever the command line says;
+	// with two of them, the one -mod names.
+	const ModPlugin* vr = nullptr;
+	for (const ModPlugin& p : plugins) {
+		const std::string id = VrModId(p);
+		if (id.empty()) continue;
+		if (!vr || id == fromCommandLine.id) vr = &p;
+		if (id == fromCommandLine.id) break;
+	}
+	// Unleashed before 0.3.16 still called its plugin D2R VR by natpoh: with
+	// -mod D2R-PCVR that line is Unleashed's.
+	if (vr) return {fromCommandLine.id == "d2r-pcvr" ? "d2r-pcvr" : VrModId(*vr), vr->version};
+
+	// Another mod: -mod, else D2RLoader's active mod, else its only plugin's
+	// name. The version only from a plugin of that same name.
+	Mod mod;
+	if (fromCommandLine.id != "none") mod.id = fromCommandLine.id;
+	else if (const std::string active = ModSlug(ActiveModName(loaderLog)); !active.empty()) mod.id = active;
+	else if (plugins.size() == 1 && !ModSlug(plugins[0].name).empty()) mod.id = ModSlug(plugins[0].name);
+	for (const ModPlugin& p : plugins)
+		if (ModSlug(p.name) == mod.id) mod.version = p.version;
+	return mod;
 }
 
 std::string ModLabel(const Mod& mod) {

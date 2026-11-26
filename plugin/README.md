@@ -43,6 +43,13 @@ Works with any D2RLoader setup — D2R VR Authentic, D2R VR Unleashed or no mod.
 It is a client-only plugin: nothing in game data or saves, not needed by other
 players in the game.
 
+The board shows each room's mod and its version. The mod is the VR mod's own
+plugin line in `d2rloader.log` (`D2R VR 0.225.0 by natpoh [mod]` = Authentic,
+`D2R PCVR 0.3.36 ... [mod]` = Unleashed), so a game started with D2RLoader's
+default mod and no `-mod` still counts; then `-mod`, D2RLoader's active mod, or
+the mod's only plugin. The version comes from that same line, never from
+another plugin in the mod folder or a `[global]` one.
+
 ## Install
 
 Copy `d2rl-d2r-rooms.dll` into `<game>/d2rloader/plugins/`. Needs D2RLoader

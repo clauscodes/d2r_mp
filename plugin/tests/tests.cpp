@@ -57,12 +57,91 @@ void TestDetectMod() {
 	CHECK(DetectMod("D2RLoader.exe -mod").id == "none");
 	CHECK(ModLabel({"d2r-vr", "0.175.0"}) == "Authentic 0.175.0");
 	CHECK(ModLabel({"d2r-pcvr", ""}) == "Unleashed");
-	CHECK(ModPluginVersion("[STARTUP] Loading plugins\r\n"
-	                       "[x]           \xE2\x94\x9C [PLUGIN]     D2R VR 0.189.0 by natpoh [mod]\r\n"
-	                       "[x]           \xE2\x94\x9C [PLUGIN]     D2R Rooms 0.3.0 by D2R Rooms [global]\r\n") == "0.189.0");
-	CHECK(ModPluginVersion("[PLUGIN]     D2R Rooms 0.3.0 by D2R Rooms [global]\n").empty());
-	CHECK(ModPluginVersion("").empty());
 	CHECK(ModLabel({"none", ""}) == "no VR mod");
+}
+
+// d2rloader.log as D2RLoader 1.3.1 writes it, with `mod` as the active mod's
+// name and `plugins` as the lines under "Loading plugins".
+std::string LoaderLog(const std::string& mod, const std::string& plugins) {
+	std::string log = "\xEF\xBB\xBF[2026-11-27 00:11:22.454] [INFO] D2RLoader v1.3.1-beta (Release, Release) started.\r\n"
+	                  "[2026-11-27 00:11:22.505] [INFO] Active mod:\r\n"
+	                  "[2026-11-27 00:11:22.506] [INFO]   +-----------------+-----------------+\r\n"
+	                  "[2026-11-27 00:11:22.507] [INFO]   | Setting         | Value           |\r\n"
+	                  "[2026-11-27 00:11:22.508] [INFO]   +-----------------+-----------------+\r\n"
+	                  "[2026-11-27 00:11:22.509] [INFO]   | name            | " + mod + "          |\r\n"
+	                  "[2026-11-27 00:11:22.511] [INFO]   | mod build       | null            |\r\n"
+	                  "[2026-11-27 00:11:22.512] [INFO]   | modinfo.name    | " + mod + "          |\r\n"
+	                  "[2026-11-27 00:11:22.704] [INFO] D2RCore v1.3.1-beta (Release) loaded.\r\n"
+	                  "[2026-11-27 00:11:22.754] [STARTUP] \xE2\x94\x8C Loading plugins and memory patches\r\n";
+	log += plugins;
+	log += "[2026-11-27 00:11:24.317]           \xE2\x94\x94 [DONE]       2 plugins loaded; no memory patches.\r\n";
+	return log;
+}
+
+std::string PluginLine(const std::string& text) {
+	return "[2026-11-27 00:11:24.299]           \xE2\x94\x9C [PLUGIN]     " + text + "\r\n";
+}
+
+void TestResolveMod() {
+	const std::string ours = PluginLine("D2R VR 0.225.0 by natpoh [mod]");
+	const std::string unleashed = PluginLine("D2R PCVR 0.3.36 by pcvr [mod]");
+	const std::string rooms = PluginLine("D2R Rooms 0.9.11 by D2R Rooms [global]");
+	const std::string pyre = PluginLine("Floating Damage 1.3.1+rev.4 by PyreFly [mod]");
+	const Mod noMod = DetectMod("\"D:\\Games\\D2R\\D2RLoader.exe\"");
+	const Mod vrMod = DetectMod("D2RLoader.exe -mod D2R-VR");
+	const Mod pcvrMod = DetectMod("D2RLoader.exe -mod D2R-PCVR");
+
+	const std::vector<ModPlugin> lines = ModPlugins(LoaderLog("D2R-VR", ours + rooms + pyre));
+	CHECK(lines.size() == 2);  // [global] left out
+	CHECK(lines.size() == 2 && lines[0].name == "D2R VR" && lines[0].version == "0.225.0" && lines[0].author == "natpoh");
+	CHECK(lines.size() == 2 && lines[1].name == "Floating Damage" && lines[1].version == "1.3.1+rev.4" && lines[1].author == "PyreFly");
+	CHECK(VrModId({"D2R VR", "0.225.0", "natpoh"}) == "d2r-vr");
+	CHECK(VrModId({"D2R PCVR", "0.3.36", "pcvr"}) == "d2r-pcvr");
+	CHECK(VrModId({"D2R VR", "1.0", "someone"}).empty());
+
+	// Room EKNR: Unleashed started as D2RLoader's default mod, no -mod: was "none 0.3.36".
+	Mod m = ResolveMod(noMod, LoaderLog("D2R-PCVR", rooms + unleashed));
+	CHECK(m.id == "d2r-pcvr" && m.version == "0.3.36");
+	m = ResolveMod(noMod, LoaderLog("<none>", unleashed));  // no active-mod table name either
+	CHECK(m.id == "d2r-pcvr" && m.version == "0.3.36");
+	// Room ACA8: Authentic with a PyreFly plugin in its mod folder after ours: was "d2r-vr 1.3.1+rev.4".
+	m = ResolveMod(vrMod, LoaderLog("D2R-VR", ours + rooms + pyre));
+	CHECK(m.id == "d2r-vr" && m.version == "0.225.0");
+	m = ResolveMod(vrMod, LoaderLog("D2R-VR", pyre + ours));  // before ours too
+	CHECK(m.id == "d2r-vr" && m.version == "0.225.0");
+	// -mod and the plugin disagree: the plugin line wins.
+	m = ResolveMod(vrMod, LoaderLog("D2R-VR", unleashed));
+	CHECK(m.id == "d2r-pcvr" && m.version == "0.3.36");
+	m = ResolveMod(DetectMod("D2RLoader.exe -mod Other"), LoaderLog("Other", ours));
+	CHECK(m.id == "d2r-vr" && m.version == "0.225.0");
+	// ...except an old Unleashed (before 0.3.16) that still called itself D2R VR by natpoh.
+	m = ResolveMod(pcvrMod, LoaderLog("D2R-PCVR", PluginLine("D2R VR 0.152.0 by natpoh [mod]")));
+	CHECK(m.id == "d2r-pcvr" && m.version == "0.152.0");
+	// Both VR plugins listed: the one -mod names.
+	m = ResolveMod(vrMod, LoaderLog("D2R-VR", unleashed + ours));
+	CHECK(m.id == "d2r-vr" && m.version == "0.225.0");
+	m = ResolveMod(noMod, LoaderLog("D2R-VR", unleashed + ours));
+	CHECK(m.id == "d2r-pcvr");  // without -mod the first listed
+
+	// Never D2RLoader's own version or a [global] plugin's.
+	m = ResolveMod(vrMod, LoaderLog("D2R-VR", rooms));
+	CHECK(m.id == "d2r-vr" && m.version.empty());
+	m = ResolveMod(noMod, LoaderLog("<none>", rooms));
+	CHECK(m.id == "none" && m.version.empty());
+	m = ResolveMod(noMod, "");
+	CHECK(m.id == "none" && m.version.empty());
+
+	// Another mod: -mod, else the active mod, else its only plugin; the version only from a plugin of its name.
+	m = ResolveMod(DetectMod("D2RLoader.exe -mod \"Pyre Mod\""), LoaderLog("Pyre Mod", pyre));
+	CHECK(m.id == "pyremod" && m.version.empty());
+	m = ResolveMod(noMod, LoaderLog("FloatingDamage", pyre));
+	CHECK(m.id == "floatingdamage" && m.version == "1.3.1+rev.4");
+	m = ResolveMod(noMod, LoaderLog("<none>", pyre));
+	CHECK(m.id == "floatingdamage" && m.version == "1.3.1+rev.4");
+	m = ResolveMod(noMod, LoaderLog("<none>", pyre + PluginLine("Ultrawide 1.3.5+rev.3 by PyreFly [mod]")));
+	CHECK(m.id == "none" && m.version.empty());  // two plugins, no name: no guess
+	// Malformed lines are skipped.
+	CHECK(ModPlugins(PluginLine("D2R VR by natpoh [mod]") + PluginLine("D2R VR invalid by natpoh [mod]")).empty());
 }
 
 const char* kRooms = R"({"v":1,"rooms":[
@@ -465,6 +544,7 @@ int main(int argc, char** argv) {
 	if (argc == 3 && std::string(argv[1]) == "--dump") return Dump(argv[2]);
 	TestJson();
 	TestDetectMod();
+	TestResolveMod();
 	TestBoard();
 	TestLayout();
 	TestToLayout();

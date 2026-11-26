@@ -65,10 +65,26 @@ struct Hosted {
 
 // The mod this game was started with, from D2RLoader's "-mod <name>" argument.
 Mod DetectMod(std::string_view commandLine);
-// The mod's own plugin version from d2rloader.log ("[PLUGIN] D2R VR 0.189.0 by
-// natpoh [mod]"), the last one listed; "" when none. D2RLoader joins only
-// players with the same shared plugins, so the board shows it.
-std::string ModPluginVersion(std::string_view loaderLog);
+
+// A "[PLUGIN]     D2R VR 0.225.0 by natpoh [mod]" line of d2rloader.log.
+struct ModPlugin {
+	std::string name;     // "D2R VR"
+	std::string version;  // "0.225.0"
+	std::string author;   // "natpoh"
+};
+// The [mod] plugin lines in order ([global] ones are left out).
+std::vector<ModPlugin> ModPlugins(std::string_view loaderLog);
+// "d2r-vr" for D2R VR by natpoh (Authentic), "d2r-pcvr" for D2R PCVR
+// (Unleashed), "" for any other plugin.
+std::string VrModId(const ModPlugin& plugin);
+// The mod for the board, from -mod and d2rloader.log together: a VR mod's own
+// plugin line wins (a game started with a default mod has no -mod; only -mod
+// D2R-PCVR keeps an old Unleashed that still says D2R VR by natpoh), and the
+// version comes from that line only, never from another plugin of the mod
+// folder (D2RLoader joins only players with the same shared plugins, so the
+// board shows it). Without a VR plugin: -mod, else D2RLoader's active mod, else
+// the only [mod] plugin's name; the version from a plugin of that name.
+Mod ResolveMod(const Mod& fromCommandLine, std::string_view loaderLog);
 
 // "Authentic 0.175.0", "Unleashed", "no VR mod", or the id itself.
 std::string ModLabel(const Mod& mod);
