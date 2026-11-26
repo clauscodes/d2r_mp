@@ -361,9 +361,13 @@ void TestToLayout() {
 	CHECK(near(ToLayout(LearnMap(guess, 1920, 1920, {}), button.x, button.y), ToLayout(guess, button.x, button.y).x,
 	           ToLayout(guess, button.x, button.y).y));
 	// The player's own presses: BROWSE GAMES at 1031,457 and HOST GAME at
-	// 928,464 (his d2r-rooms-clicks.txt). Then his clicks aimed at the D2R
-	// Rooms button, which 0.9.9 (one scale for both axes) put left of it.
-	ClickMap learned = LearnMap(guess, 1920, 1920, {{1031, 457, 114, 342}, {928, 464, -125, 342}});
+	// 928,464 (his d2r-rooms-clicks.txt), one row: they cannot tell the top
+	// from the scale, so the guess stays (0.9.10 took the window's middle row
+	// for the interface's and drifted on a 16:9 band at the top).
+	CHECK(LearnMap(guess, 1920, 1920, {{1031, 457, 114, 342}, {928, 464, -125, 342}}).ky == guess.ky);
+	// With a CREATE GAME press as well, then his clicks aimed at the D2R Rooms
+	// button, which 0.9.9 (one scale for both axes) put left of it.
+	ClickMap learned = LearnMap(guess, 1920, 1920, {{1031, 457, 114, 342}, {928, 464, -125, 342}, press("CreateGame", 0, 0)});
 	CHECK(std::abs(learned.kx - 0.5) < 0.001 && std::abs(learned.ky - 0.682) < 0.01 && std::abs(learned.top - 224) < 10);
 	const std::vector<std::pair<int, int>> aimed {{1259, 364}, {1246, 375}, {1237, 376}, {1229, 396}, {1223, 386}, {1262, 375},
 	                                              {1253, 392}, {1260, 366}, {1250, 377}, {1201, 368}, {1371, 376}};
@@ -377,29 +381,122 @@ void TestToLayout() {
 		return false;
 	};
 	CHECK(hit("Close", 1179, 370) && hit("Refresh", 1122, 1278));
-	// One press on BROWSE GAMES, off its middle: the button is hit.
+	// One press on BROWSE GAMES: one row, the guess stays.
 	learned = LearnMap(guess, 1920, 1920, {press("ShowBrowse", 80, -40)});
-	CHECK(onTab(ToLayout(learned, button.x, button.y)));
-	CHECK(onTab(ToLayout(learned, button.x - 0.5 * 150, button.y + 0.682 * 30)));
+	CHECK(learned.kx == guess.kx && learned.ky == guess.ky && learned.top == guess.top);
 	// HOST GAME and CREATE GAME: two heights.
 	learned = LearnMap(guess, 1920, 1920, {press("ShowHost", -60, 30), press("CreateGame", 100, 20)});
 	CHECK(std::abs(learned.kx - 0.5) < 0.001 && std::abs(learned.ky - 0.682) < 0.05 && onTab(ToLayout(learned, button.x, button.y)));
-	// The flat 1366x768 game in its 2538x1323 window: a press keeps the right guess right.
+	// ...and with JOIN (Direct Join's Join Game) too, a press off by a tab's height.
+	learned = LearnMap(guess, 1920, 1920, {press("ShowHost", -60, 30), press("CreateGame", 100, 20), press("JoinDirect", 0, 60), press("ShowBrowse", 0, 0)});
+	CHECK(std::abs(learned.ky - 0.682) < 0.05 && onTab(ToLayout(learned, button.x, button.y)));
+	// The flat 1366x768 game in its 2538x1323 window: two rows keep the right guess right.
 	const ClickMap flat = PictureMap(2538, 1323, 1366, 768);
-	const LayoutPoint host = *LoaderTarget("ShowHost");
-	const PixelPoint hp = FromLayout(flat, host.x, host.y + 20);
-	learned = LearnMap(flat, 2538, 1323, {{hp.x, hp.y, host.x, host.y}});
+	const LayoutPoint host = *LoaderTarget("ShowHost"), create = *LoaderTarget("CreateGame");
+	const PixelPoint hp = FromLayout(flat, host.x, host.y + 20), cp = FromLayout(flat, create.x, create.y - 10);
+	learned = LearnMap(flat, 2538, 1323, {{hp.x, hp.y, host.x, host.y}, {cp.x, cp.y, create.x, create.y}});
 	CHECK(std::abs(learned.kx - flat.kx) < 0.03 && std::abs(learned.ky - flat.ky) < 0.03 && onTab(ToLayout(learned, 1512, 363)));
-	// A flat 16:9 window: a press off the tab's middle keeps one scale for both axes.
+	// A flat 16:9 window: presses off the buttons' middles keep one scale for both axes.
 	const ClickMap wide = PictureMap(1920, 1080, 0, 0);
-	const PixelPoint bp = FromLayout(wide, 114 + 60, 342 - 30);
-	learned = LearnMap(wide, 1920, 1080, {{bp.x, bp.y, 114, 342}});
+	const PixelPoint bp = FromLayout(wide, 114 + 60, 342 - 30), wp = FromLayout(wide, create.x, create.y + 25);
+	learned = LearnMap(wide, 1920, 1080, {{bp.x, bp.y, 114, 342}, {wp.x, wp.y, create.x, create.y}});
 	CHECK(std::abs(learned.kx - learned.ky) < 0.001 && std::abs(learned.kx - 0.5) < 0.05);
-	// A stray press (the guess's middle row) leaves the guess.
-	CHECK(LearnMap(guess, 1920, 1920, {{960, 960, 114, 342}}).ky == guess.ky);
+	// Stray presses (both on the same pixel) leave the guess.
+	CHECK(LearnMap(guess, 1920, 1920, {{960, 960, 114, 342}, {960, 960, create.x, create.y}}).ky == guess.ky);
 	// The window's own clicks go back to the same pixel.
 	const PixelPoint back = FromLayout(learned, 300, 900);
 	CHECK(near(ToLayout(learned, back.x, back.y), 300, 900));
+}
+
+// D2R VR's main menu laid out as a 16:9 band (Serg's PC, 2026-11-27: the
+// 1280x1280 window, the game's client-size query answering 1280x720): the
+// interface is 0.333 px a unit both ways from the window's top.
+void TestBand() {
+	CHECK(IsBand(1280, 1280, 1280, 720));
+	CHECK(IsBand(2496, 2688, 2496, 1404));
+	CHECK(!IsBand(1280, 1280, 1280, 1280));  // the square menu
+	CHECK(!IsBand(1920, 1080, 1920, 1080));  // a flat 16:9 game
+	CHECK(!IsBand(1280, 1280, 0, 0));        // no answer
+	CHECK(!IsBand(1280, 1280, 1000, 562));   // not as wide as the picture
+	CHECK(!IsBand(1280, 1280, 1280, 1000));  // not 16:9
+
+	const ClickMap band = BandMap(1280, 1280, 1280, 1280, 1280, 720);
+	CHECK(std::abs(band.kx - 1.0 / 3) < 1e-6 && std::abs(band.ky - 1.0 / 3) < 1e-6 && band.cx == 640 && std::abs(band.top) < 1e-6);
+	CHECK(BandMap(1280, 1280, 0, 0, 1280, 720).ky == band.ky);  // no picture size: the window's
+	// A picture larger than the window, stretched over it.
+	const ClickMap big = BandMap(1280, 1280, 2496, 2688, 2496, 1404);
+	CHECK(std::abs(big.kx - 1.0 / 3) < 1e-3 && std::abs(big.ky - 0.65 * 1280 / 2688) < 1e-3 && std::abs(big.top) < 1e-6);
+
+	// The tab, Join and Refresh where the band draws them.
+	const auto hits = [&](const std::vector<HitArea>& areas, int lx, int ly, const char* command) {
+		const PixelPoint px = FromLayout(band, lx, ly);
+		const LayoutPoint p = ToLayout(band, px.x, px.y);
+		for (const HitArea& a : areas)
+			if (p.x >= a.x && p.x < a.x + a.width && p.y >= a.y && p.y < a.y + a.height) return a.command == command;
+		return false;
+	};
+	const HitArea tab = TabHitAreas()[0];
+	CHECK(hits(TabHitAreas(), tab.x + tab.width / 2, tab.y + tab.height / 2, "Tab"));
+	PanelView view;
+	view.rooms.resize(2);
+	for (const HitArea& a : WindowHitAreas(view))
+		if (a.command == "Join" || a.command == "Refresh") CHECK(hits(WindowHitAreas(view), a.x + a.width / 2, a.y + a.height / 2, a.command.c_str()));
+	// The square map 0.9.10 had learned for the same window (0.333 x 0.514, top 85) put the band's tab press elsewhere.
+	const ClickMap square {1.0 / 3, 0.514, 640, 85};
+	const PixelPoint tabPx = FromLayout(band, tab.x + tab.width / 2, tab.y + tab.height / 2);
+	const LayoutPoint wrong = ToLayout(square, tabPx.x, tabPx.y);
+	CHECK(!(wrong.y >= tab.y && wrong.y < tab.y + tab.height));
+
+	// Presses on the band's tab row alone (HOST GAME, BROWSE GAMES) no longer
+	// drift the vertical scale (0.9.10: 0.542, then 0.648, top -60).
+	const ClickMap guess = PictureMap(1280, 1280, 1280, 1280);
+	const auto bandPress = [&](const char* command, int dx, int dy) {
+		const LayoutPoint t = *LoaderTarget(command);
+		const PixelPoint p = FromLayout(band, t.x + dx, t.y + dy);
+		return ClickSample {p.x, p.y, t.x, t.y};
+	};
+	const ClickMap rowOnly = LearnMap(guess, 1280, 1280, {bandPress("ShowHost", 20, 25), bandPress("ShowBrowse", -30, -20), bandPress("ShowHost", 0, 40)});
+	CHECK(rowOnly.ky == guess.ky && rowOnly.top == guess.top);
+	// Two rows find the band even without the query's answer (Unleashed answers only the game's own callers).
+	const ClickMap twoRows = LearnMap(guess, 1280, 1280, {bandPress("ShowHost", 20, 25), bandPress("CreateGame", 0, -15), bandPress("ShowBrowse", 0, 0)});
+	CHECK(std::abs(twoRows.ky - 1.0 / 3) < 0.02 && std::abs(twoRows.top) < 15 && std::abs(twoRows.kx - 1.0 / 3) < 0.02);
+
+	// The presses are kept per window, picture and query answer.
+	const MapKey squareKey {1280, 1280, 1280, 1280, 1280, 1280}, bandKey {1280, 1280, 1280, 1280, 1280, 720};
+	const MapKey squareAgain {1280, 1280, 1280, 1280, 1280, 1280};
+	CHECK(!(squareKey == bandKey) && squareKey == squareAgain);
+	const std::vector<KeyedSample> kept {{squareKey, {928.5, 464, -125, 342}}, {bandKey, {600, 114, -6, 1510}}};
+	const std::vector<KeyedSample> read = ParseClickSamples(ClickSamplesText(kept));
+	CHECK(read.size() == 2 && read[0].key == squareKey && read[1].key == bandKey && read[0].sample.px == 928.5 && read[1].sample.y == 1510);
+	// 0.9.12's lines (the window alone) and junk are dropped.
+	CHECK(ParseClickSamples("1280 1280 928 464 -125 342\r\n1920 1920 1031 457 114 342\n").empty());
+	CHECK(ParseClickSamples("x y\n0 0 0 0 0 0 1 2 3 4\n1280 1280 0 0 0 0 1 2 3 4\r\n").size() == 1);
+}
+
+// The game's client-size query found in D2R.exe's code, as it is and with a
+// VR mod's hook on its first bytes.
+void TestClientSizeQuery() {
+	const std::string body("\x48\x83\xEC\x38\xE8\x97\xD1\x2A\x00\x48\x8D\x54\x24\x20\x48\x8B\xC8\xE8\x11\x22\x33\x44\x8B\x44\x24\x28\x89\x44\x24\x40", 30);
+	CHECK(body.size() == 30);
+	const std::string pad(37, '\xCC');
+	CHECK((FindClientSizeQuery(pad + body + pad) == std::vector<size_t> {37}));
+	std::string hooked = body;
+	hooked.replace(0, 5, "\xE9\x01\x02\x03\x04");  // jmp rel32
+	CHECK((FindClientSizeQuery(pad + hooked + pad) == std::vector<size_t> {37}));
+	hooked = body;
+	hooked.replace(0, 14, std::string("\xFF\x25\x00\x00\x00\x00", 6) + "\x10\x20\x30\x40\x50\x60\x70\x7F");  // jmp [rip]
+	CHECK((FindClientSizeQuery(pad + hooked + pad) == std::vector<size_t> {37}));
+	// Two copies: both reported (the plugin then uses neither).
+	CHECK(FindClientSizeQuery(pad + body + pad + body).size() == 2);
+	// Something else at the start, or a different tail: not it.
+	std::string other = body;
+	other[0] = '\x55';
+	CHECK(FindClientSizeQuery(pad + other + pad).empty());
+	other = body;
+	other[25] = '\x2C';
+	CHECK(FindClientSizeQuery(pad + other + pad).empty());
+	CHECK(FindClientSizeQuery(body.substr(0, 29)).empty());
+	CHECK(FindClientSizeQuery("").empty());
 }
 
 void TestPlayerCount() {
@@ -558,6 +655,8 @@ int main(int argc, char** argv) {
 	TestBoard();
 	TestLayout();
 	TestToLayout();
+	TestBand();
+	TestClientSizeQuery();
 	TestPlayerCount();
 	TestRelay();
 	std::printf("%d checks, %d failed\n", g_checks, g_failed);

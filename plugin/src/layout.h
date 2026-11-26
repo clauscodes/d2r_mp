@@ -99,13 +99,48 @@ struct ClickSample {
 // Where the D2RLoader buttons whose presses teach the map are (their middles):
 // ShowHost, ShowBrowse, CreateGame, JoinDirect. Measured on flat games.
 std::optional<LayoutPoint> LoaderTarget(std::string_view command);
-// The map the presses on this window size show, `guess` until there are any.
-// The interface is a box centred on the window. The presses give its height
-// (D2RLoader's buttons are far from the middle row, near it horizontally);
-// its width is the guess's shape when the height is the guess's, and the
-// window's whole width when it is taller than the guess: the picture is
-// stretched over the window (D2R VR), and the interface spans a picture
-// narrower than 16:9 from side to side.
+// The game's client-size query (GetClientRect of its window, the size the
+// game lays its interface out in) answered `canvasW` x `canvasH` on a
+// `pictureW` x `pictureH` picture: a 16:9 band as wide as the picture and
+// lower than it is D2R VR's menus laid out at 16:9 at the picture's top.
+bool IsBand(int pictureW, int pictureH, int canvasW, int canvasH);
+// The map for that band: 3840 x 2160 units fitted into the band from the
+// picture's top, the picture stretched over the window (0 = the window's).
+ClickMap BandMap(int windowW, int windowH, int pictureW, int pictureH, int canvasW, int canvasH);
+
+// The presses' rows must be this far apart (units) to give a height.
+inline constexpr int kMinRowSpan = 300;
+// The map the presses show, `guess` until they lie on two rows at least:
+// presses on one row (D2RLoader's HOST GAME and BROWSE GAMES tabs) cannot tell
+// the interface's top from its scale. The rows give its height and top; its
+// width is the guess's shape when the height is the guess's, and the window's
+// whole width when it is taller than the guess: the picture is stretched over
+// the window (D2R VR), and the interface spans a picture narrower than 16:9
+// from side to side. Centred across the window.
 ClickMap LearnMap(const ClickMap& guess, int windowW, int windowH, const std::vector<ClickSample>& samples);
+
+// What the presses are kept apart by: the window, the game's picture and the
+// client-size query's answer (0 = unknown). A menu laid out square and the
+// same window's menu laid out as a 16:9 band are different maps.
+struct MapKey {
+	int windowW = 0, windowH = 0, pictureW = 0, pictureH = 0, canvasW = 0, canvasH = 0;
+	bool operator==(const MapKey&) const = default;
+};
+// d2r-rooms-clicks.txt: one press a line, "windowW windowH pictureW pictureH
+// canvasW canvasH px py x y". Lines of 0.9.12 and older (6 numbers, keyed by
+// the window alone) are dropped: they mixed both layouts.
+struct KeyedSample {
+	MapKey key;
+	ClickSample sample;
+};
+std::vector<KeyedSample> ParseClickSamples(std::string_view text);
+
+// Where the game's client-size query starts in `code` (D2R.exe's .text as
+// read): sub rsp,38h; call <the window>; lea rdx,[rsp+20h]; mov rcx,rax; call
+// <GetClientRect>; mov eax,[rsp+28h]; mov [rsp+40h],eax. Its first 14 bytes
+// may be a VR mod's jump (D2R VR and Unleashed hook it); the rest must match.
+// Every match's offset (the caller uses it only when there is exactly one).
+std::vector<size_t> FindClientSizeQuery(std::string_view code);
+std::string ClickSamplesText(const std::vector<KeyedSample>& samples);
 
 }  // namespace rooms

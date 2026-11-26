@@ -26,18 +26,27 @@ rooms (relay mark, VR version, players, Join, the password of a locked room).
 D2RLoader builds its window in its code and it is modal: a plugin cannot add
 to it, and clicks there never reach a plugin's button. So the tab button is
 the plugin's own panel at measured coordinates, and the plugin matches the
-cursor against it on each click. The game's picture can differ from the window (a game resolution below the
-window's, D2R VR's render size), so the plugin learns where the interface is:
-each press of one of D2RLoader's own buttons (*HOST GAME*, *BROWSE GAMES*,
-*CREATE GAME*, *Join*) is a window pixel at a known place, and one is enough.
-A press gives the interface's height. Its width follows from that: the
-guess's shape when the height is the guess's, and the window's whole width
-when the interface is taller than the guess. That second case is a picture
-stretched over the window, which is what D2R VR does to the game's cursor,
-on each axis apart. The presses are kept in `d2r-rooms-clicks.txt` beside
-the DLL, per window size; until there is one, the guess is the overlay's
-picture size centred on the window. **F9** opens the D2R Rooms window from D2RLoader's whatever the
-clicks do.
+cursor against it on each click. The game lays its interface out in the size
+its client-size query answers (the game's GetClientRect of its window, found
+in D2R.exe's code by its bytes; a VR mod's hook on its first bytes is
+allowed). When that answer is a 16:9 band as wide as the picture and lower
+than it (D2R VR's menus laid out at 16:9 at the picture's top), the map is
+the band's, exactly.
+
+Otherwise the game's picture can differ from the window (a game resolution
+below the window's, D2R VR's render size), so the plugin learns where the
+interface is: each press of one of D2RLoader's own buttons (*HOST GAME*,
+*BROWSE GAMES*, *CREATE GAME*, *Join*) is a window pixel at a known place.
+Presses on two rows (a tab and *CREATE GAME* or *Join*) give the interface's
+height and top; the tabs alone are one row and teach nothing. Its width
+follows: the guess's shape when the height is the guess's, and the window's
+whole width when the interface is taller than the guess. That second case is
+a picture stretched over the window, which is what D2R VR does to the game's
+cursor, on each axis apart. The presses are kept in `d2r-rooms-clicks.txt`
+beside the DLL, per window, picture and query answer (a square menu and a
+16:9 band in the same window are different maps); until there are two rows,
+the guess is the overlay's picture size centred on the window. **F9** opens
+the D2R Rooms window from D2RLoader's whatever the clicks do.
 
 Works with any D2RLoader setup — D2R VR Authentic, D2R VR Unleashed or no mod.
 It is a client-only plugin: nothing in game data or saves, not needed by other

@@ -36,6 +36,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -606,17 +607,16 @@ HWND GameWindow() {
 }
 
 // --- the window's pixels and layout units (layout.h ClickMap) ------------
-// The first guess is the game's picture (the overlay's screen size) centred on
-// the window; D2RLoader's own buttons, which the game hit-tests itself, teach
-// the real map: each press of one is a window pixel and a known place. Kept in
-// d2r-rooms-clicks.txt beside the DLL, per window size. UI thread.
+// The game lays its interface out in the size its client-size query answers.
+// When that is a 16:9 band at the picture's top (D2R VR's menus at 16:9), the
+// map is the band's, exactly. Otherwise the first guess is the game's picture
+// (the overlay's screen size) centred on the window, and D2RLoader's own
+// buttons, which the game hit-tests itself, teach the real map: each press of
+// one is a window pixel and a known place. Kept in d2r-rooms-clicks.txt beside
+// the DLL, per window, picture and query answer (layout.h MapKey). UI thread.
 
-struct SavedSample {
-	int w, h;
-	ClickSample s;
-};
-std::vector<SavedSample> g_clickSamples;
-constexpr size_t kSamplesPerSize = 8;
+std::vector<KeyedSample> g_clickSamples;
+constexpr size_t kSamplesPerKey = 8;
 
 // The last press of the left button: where, on which window size, when.
 struct Press {
@@ -636,46 +636,152 @@ std::string ClicksPath() {
 }
 
 void LoadClickSamples() {
-	std::istringstream in(ReadText(ClicksPath()));
-	SavedSample s {};
-	while (in >> s.w >> s.h >> s.s.px >> s.s.py >> s.s.x >> s.s.y) g_clickSamples.push_back(s);
+	const std::string text = ReadText(ClicksPath());
+	g_clickSamples = ParseClickSamples(text);
 	if (!g_clickSamples.empty()) Log("clicks: %zu press(es) of D2RLoader's buttons from earlier games", g_clickSamples.size());
+	else if (!text.empty()) Log("clicks: the presses of 0.9.12 and older (keyed by the window alone) are not used");
 }
 
 void SaveClickSamples() {
-	std::ostringstream out;
-	for (const SavedSample& s : g_clickSamples) out << s.w << ' ' << s.h << ' ' << s.s.px << ' ' << s.s.py << ' ' << s.s.x << ' ' << s.s.y << '\n';
-	std::ofstream(ClicksPath(), std::ios::binary | std::ios::trunc) << out.str();
+	std::ofstream(ClicksPath(), std::ios::binary | std::ios::trunc) << ClickSamplesText(g_clickSamples);
 }
 
-ClickMap CurrentMap(int w, int h, int* pictureW = nullptr, int* pictureH = nullptr) {
-	int pw = 0, ph = 0;
+// The game's client-size query (layout.h FindClientSizeQuery), called as the
+// game's own interface code calls it: {width, height} in rax. D2R VR answers
+// it with the band while the menus are laid out at 16:9.
+using ClientSizeFn = uint64_t (*)();
+ClientSizeFn g_clientSize = nullptr;
+bool g_clientSizeGaveUp = false;
+std::chrono::steady_clock::time_point g_clientSizeNextLook;
+
+bool SafeCopy(void* dst, const void* src, size_t n) noexcept {
+	__try {
+		std::memcpy(dst, src, n);
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		return false;
+	}
+}
+
+bool SafeCallClientSize(ClientSizeFn fn, uint64_t* out) noexcept {
+	__try {
+		*out = fn();
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		return false;
+	}
+}
+
+bool PageReadable(uintptr_t address) {
+	MEMORY_BASIC_INFORMATION mi {};
+	if (!VirtualQuery(reinterpret_cast<const void*>(address), &mi, sizeof(mi)) || mi.State != MEM_COMMIT) return false;
+	if (mi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) return false;
+	return (mi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0;
+}
+
+// Looks for the query once D2R.exe's code reads (it may still be encrypted
+// early on): again every 10 s while part of it does not read, never again
+// after a whole read without exactly one match.
+void FindClientSize() {
+	if (g_clientSize || g_clientSizeGaveUp || std::chrono::steady_clock::now() < g_clientSizeNextLook) return;
+	g_clientSizeNextLook = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	if (g_ctx->contextSize < offsetof(D2RL::PluginContext, exeBase) + sizeof(uintptr_t) || !g_ctx->exeBase) {
+		g_clientSizeGaveUp = true;
+		return;
+	}
+	const uintptr_t base = g_ctx->exeBase;
+	IMAGE_DOS_HEADER dos {};
+	IMAGE_NT_HEADERS64 nt {};
+	if (!SafeCopy(&dos, reinterpret_cast<const void*>(base), sizeof(dos)) || dos.e_magic != IMAGE_DOS_SIGNATURE ||
+	    !SafeCopy(&nt, reinterpret_cast<const void*>(base + dos.e_lfanew), sizeof(nt)) || nt.Signature != IMAGE_NT_SIGNATURE) {
+		g_clientSizeGaveUp = true;
+		return;
+	}
+	const uintptr_t sections = base + dos.e_lfanew + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) + nt.FileHeader.SizeOfOptionalHeader;
+	uintptr_t textRva = 0;
+	size_t textSize = 0;
+	for (int i = 0; i < nt.FileHeader.NumberOfSections; ++i) {
+		IMAGE_SECTION_HEADER s {};
+		if (!SafeCopy(&s, reinterpret_cast<const void*>(sections + i * sizeof(s)), sizeof(s))) break;
+		if (std::memcmp(s.Name, ".text", 6) == 0) {
+			textRva = s.VirtualAddress;
+			textSize = s.Misc.VirtualSize;
+			break;
+		}
+	}
+	if (!textRva || !textSize || textSize > (256u << 20)) {
+		g_clientSizeGaveUp = true;
+		return;
+	}
+	// .text as it reads now; pages that do not read stay zero.
+	const auto started = std::chrono::steady_clock::now();
+	std::string code(textSize, '\0');
+	size_t unreadable = 0;
+	for (size_t off = 0; off < textSize; off += 0x1000) {
+		const size_t n = std::min<size_t>(0x1000, textSize - off);
+		const uintptr_t at = base + textRva + off;
+		if (!PageReadable(at) || !SafeCopy(code.data() + off, reinterpret_cast<const void*>(at), n)) ++unreadable;
+	}
+	const std::vector<size_t> hits = FindClientSizeQuery(code);
+	const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+	if (hits.size() == 1) {
+		g_clientSize = reinterpret_cast<ClientSizeFn>(base + textRva + hits[0]);
+		Log("clicks: the game's client-size query at +0x%llX (%lld ms)", static_cast<unsigned long long>(textRva + hits[0]), ms);
+	} else if (!unreadable || hits.size() > 1) {
+		g_clientSizeGaveUp = true;
+		Log("clicks: the game's client-size query not found (%zu match(es), %lld ms): the map comes from the picture and the presses", hits.size(), ms);
+	}
+}
+
+// The query's answer now, {0, 0} when there is none.
+std::pair<int, int> ClientSizeAnswer() {
+	FindClientSize();
+	uint64_t v = 0;
+	if (!g_clientSize || !SafeCallClientSize(g_clientSize, &v)) return {0, 0};
+	const int w = static_cast<int>(static_cast<uint32_t>(v)), h = static_cast<int>(static_cast<uint32_t>(v >> 32));
+	return w > 0 && h > 0 && w <= 32768 && h <= 32768 ? std::pair {w, h} : std::pair {0, 0};
+}
+
+MapKey CurrentKey(int w, int h) {
+	MapKey key;
+	key.windowW = w;
+	key.windowH = h;
 	D2RL::Overlay::Metrics m {};
 	m.structSize = sizeof(m);
 	if (g_overlay && g_overlay->getMetrics(g_ctx, &m) == D2RL::Overlay::Result::Success && m.screenWidth >= 1 && m.screenHeight >= 1) {
-		pw = static_cast<int>(m.screenWidth);
-		ph = static_cast<int>(m.screenHeight);
+		key.pictureW = static_cast<int>(m.screenWidth);
+		key.pictureH = static_cast<int>(m.screenHeight);
 	}
-	if (pictureW) *pictureW = pw;
-	if (pictureH) *pictureH = ph;
+	std::tie(key.canvasW, key.canvasH) = ClientSizeAnswer();
+	return key;
+}
+
+ClickMap CurrentMap(const MapKey& key) {
+	const int pw = key.pictureW > 0 ? key.pictureW : key.windowW, ph = key.pictureH > 0 ? key.pictureH : key.windowH;
+	if (IsBand(pw, ph, key.canvasW, key.canvasH)) return BandMap(key.windowW, key.windowH, pw, ph, key.canvasW, key.canvasH);
 	std::vector<ClickSample> samples;
-	for (const SavedSample& s : g_clickSamples)
-		if (s.w == w && s.h == h) samples.push_back(s.s);
-	return LearnMap(PictureMap(w, h, pw, ph), w, h, samples);
+	for (const KeyedSample& s : g_clickSamples)
+		if (s.key == key) samples.push_back(s.sample);
+	return LearnMap(PictureMap(key.windowW, key.windowH, key.pictureW, key.pictureH), key.windowW, key.windowH, samples);
+}
+
+ClickMap CurrentMap(int w, int h) {
+	return CurrentMap(CurrentKey(w, h));
 }
 
 void Learn(const std::string& command, const LayoutPoint& target, const Press& press) {
-	std::vector<SavedSample> same;
-	for (const SavedSample& s : g_clickSamples)
-		if (s.w == press.w && s.h == press.h) same.push_back(s);
-	std::erase_if(g_clickSamples, [&](const SavedSample& s) { return s.w == press.w && s.h == press.h; });
-	same.push_back({press.w, press.h, {static_cast<double>(press.p.x), static_cast<double>(press.p.y), target.x, target.y}});
-	if (same.size() > kSamplesPerSize) same.erase(same.begin(), same.end() - kSamplesPerSize);
+	const MapKey key = CurrentKey(press.w, press.h);
+	std::vector<KeyedSample> same;
+	for (const KeyedSample& s : g_clickSamples)
+		if (s.key == key) same.push_back(s);
+	std::erase_if(g_clickSamples, [&](const KeyedSample& s) { return s.key == key; });
+	same.push_back({key, {static_cast<double>(press.p.x), static_cast<double>(press.p.y), target.x, target.y}});
+	if (same.size() > kSamplesPerKey) same.erase(same.begin(), same.end() - kSamplesPerKey);
 	g_clickSamples.insert(g_clickSamples.end(), same.begin(), same.end());
 	SaveClickSamples();
-	const ClickMap map = CurrentMap(press.w, press.h);
-	Log("clicks: %s at %ld,%ld px (window %dx%d) -> %.3f x %.3f px a unit, top %.0f px (%zu press(es))", command.c_str(), press.p.x, press.p.y,
-	    press.w, press.h, map.kx, map.ky, map.top, same.size());
+	const ClickMap map = CurrentMap(key);
+	Log("clicks: %s at %ld,%ld px (window %dx%d, picture %dx%d, interface %dx%d) -> %.3f x %.3f px a unit, top %.0f px (%zu press(es))", command.c_str(),
+	    press.p.x, press.p.y, press.w, press.h, key.pictureW, key.pictureH, key.canvasW, key.canvasH, map.kx, map.ky, map.top, same.size());
 }
 
 // A D2RLoader button message waiting for its press's release (its tabs answer
@@ -1464,8 +1570,8 @@ void HandleClick() {
 	POINT p {};
 	RECT rc {};
 	if (!CursorInClient(&p, &rc)) return;
-	int pictureW = 0, pictureH = 0;
-	const ClickMap map = CurrentMap(rc.right, rc.bottom, &pictureW, &pictureH);
+	const MapKey key = CurrentKey(rc.right, rc.bottom);
+	const ClickMap map = CurrentMap(key);
 	const auto [x, y] = ToLayout(map, p.x, p.y);
 	const std::vector<HitArea> areas = g_tabButtonOpen ? TabHitAreas() : WindowHitAreas(g_shownView);
 	for (const HitArea& a : areas) {
@@ -1476,8 +1582,10 @@ void HandleClick() {
 		HandleOwn(a.command, a.argument);
 		return;
 	}
-	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d, %.3f x %.3f px a unit, top %.0f)", x, y, rc.right, rc.bottom, p.x, p.y, pictureW,
-	    pictureH, map.kx, map.ky, map.top);
+	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d, interface %dx%d%s, %.3f x %.3f px a unit, top %.0f)", x, y, rc.right, rc.bottom, p.x,
+	    p.y, key.pictureW, key.pictureH, key.canvasW, key.canvasH,
+	    IsBand(key.pictureW > 0 ? key.pictureW : key.windowW, key.pictureH > 0 ? key.pictureH : key.windowH, key.canvasW, key.canvasH) ? " band" : "",
+	    map.kx, map.ky, map.top);
 }
 
 D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContext*, const D2RL::SharedEvents::UiMessageEvent* event, void*) noexcept {

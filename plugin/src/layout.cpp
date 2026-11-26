@@ -4,6 +4,7 @@
 #include <cmath>
 #include <optional>
 #include <iterator>
+#include <sstream>
 
 #include "json.h"
 
@@ -273,21 +274,90 @@ std::optional<LayoutPoint> LoaderTarget(std::string_view command) {
 	return std::nullopt;
 }
 
+bool IsBand(int pictureW, int pictureH, int canvasW, int canvasH) {
+	return pictureW > 0 && canvasW == pictureW && canvasH > 0 && canvasH < pictureH && std::abs(canvasH - canvasW * 9 / 16) <= 1;
+}
+
+ClickMap BandMap(int windowW, int windowH, int pictureW, int pictureH, int canvasW, int canvasH) {
+	if (pictureW <= 0 || pictureH <= 0) {
+		pictureW = windowW;
+		pictureH = windowH;
+	}
+	const double sx = static_cast<double>(windowW) / pictureW, sy = static_cast<double>(windowH) / pictureH;
+	const double k = std::min(canvasW / 3840.0, canvasH / 2160.0);
+	return {k * sx, k * sy, canvasW / 2.0 * sx, (canvasH / 2.0 - 1080 * k) * sy};
+}
+
 ClickMap LearnMap(const ClickMap& guess, int windowW, int windowH, const std::vector<ClickSample>& samples) {
-	if (samples.empty() || windowW <= 0 || windowH <= 0 || guess.kx <= 0 || guess.ky <= 0) return guess;
-	// The height: each press's scale about the window's middle row.
+	if (samples.size() < 2 || windowW <= 0 || windowH <= 0 || guess.kx <= 0 || guess.ky <= 0) return guess;
+	// The height from two rows at least (a row alone says nothing of where the
+	// interface's top is): the median slope of the pairs on different rows.
 	std::vector<double> ks;
-	for (const ClickSample& s : samples)
-		if (std::abs(1080 - s.y) >= 300) ks.push_back((windowH / 2.0 - s.py) / (1080.0 - s.y));
+	for (size_t i = 0; i < samples.size(); ++i)
+		for (size_t j = i + 1; j < samples.size(); ++j)
+			if (std::abs(samples[j].y - samples[i].y) >= kMinRowSpan) ks.push_back((samples[j].py - samples[i].py) / (samples[j].y - samples[i].y));
 	if (ks.empty()) return guess;
 	std::sort(ks.begin(), ks.end());
 	const double ky = ks[ks.size() / 2];
-	// A press far from where it was taken for (a stray click) leaves the guess.
+	// Presses far from where they were taken for (a stray click) leave the guess.
 	if (!(ky > 0.05 && ky < 5)) return guess;
+	std::vector<double> tops;
+	for (const ClickSample& s : samples) tops.push_back(s.py - s.y * ky);
+	std::sort(tops.begin(), tops.end());
+	const double top = tops[tops.size() / 2];
 	// The width: the guess's shape, unless the box is clearly taller than the
 	// guess (a press is anywhere on a tab, some 8% of the height either way).
 	const double kx = ky > guess.ky * 1.15 ? windowW / 3840.0 : guess.kx * ky / guess.ky;
-	return {kx, ky, windowW / 2.0, windowH / 2.0 - 1080 * ky};
+	return {kx, ky, windowW / 2.0, top};
+}
+
+std::vector<KeyedSample> ParseClickSamples(std::string_view text) {
+	std::vector<KeyedSample> out;
+	std::istringstream lines {std::string(text)};
+	std::string line;
+	while (std::getline(lines, line)) {
+		std::istringstream in(line);
+		std::vector<double> v;
+		double d = 0;
+		while (in >> d) v.push_back(d);
+		if (v.size() != 10) continue;
+		const auto i = [&](size_t n) { return static_cast<int>(std::lround(v[n])); };
+		const MapKey key {i(0), i(1), i(2), i(3), i(4), i(5)};
+		if (key.windowW <= 0 || key.windowH <= 0) continue;
+		out.push_back({key, {v[6], v[7], i(8), i(9)}});
+	}
+	return out;
+}
+
+std::vector<size_t> FindClientSizeQuery(std::string_view code) {
+	// From byte 14: mov rcx,rax; call ?; mov eax,[rsp+28h]; mov [rsp+40h],eax.
+	static constexpr int kTail[] = {0x48, 0x8B, 0xC8, 0xE8, -1, -1, -1, -1, 0x8B, 0x44, 0x24, 0x28, 0x89, 0x44, 0x24, 0x40};
+	static constexpr int kOriginal[] = {0x48, 0x83, 0xEC, 0x38, 0xE8, -1, -1, -1, -1, 0x48, 0x8D, 0x54, 0x24, 0x20};
+	constexpr size_t kTailAt = 14;
+	const auto byte = [&](size_t i) { return static_cast<unsigned char>(code[i]); };
+	std::vector<size_t> hits;
+	for (size_t at = code.find('\x48'); at != std::string_view::npos && at + std::size(kTail) <= code.size(); at = code.find('\x48', at + 1)) {
+		if (at < kTailAt) continue;
+		const size_t fn = at - kTailAt;
+		bool tail = true;
+		for (size_t i = 0; i < std::size(kTail) && tail; ++i) tail = kTail[i] < 0 || byte(at + i) == kTail[i];
+		if (!tail) continue;
+		bool original = true;
+		for (size_t i = 0; i < std::size(kOriginal) && original; ++i) original = kOriginal[i] < 0 || byte(fn + i) == kOriginal[i];
+		// A hook's jump: jmp rel32, jmp [rip+0], or mov rax/r11, imm64 then jmp.
+		const unsigned char b0 = byte(fn), b1 = byte(fn + 1);
+		const bool hooked = b0 == 0xE9 || (b0 == 0xFF && b1 == 0x25) || ((b0 == 0x48 || b0 == 0x49) && b1 >= 0xB8 && b1 <= 0xBF);
+		if (original || hooked) hits.push_back(fn);
+	}
+	return hits;
+}
+
+std::string ClickSamplesText(const std::vector<KeyedSample>& samples) {
+	std::ostringstream out;
+	for (const KeyedSample& s : samples)
+		out << s.key.windowW << ' ' << s.key.windowH << ' ' << s.key.pictureW << ' ' << s.key.pictureH << ' ' << s.key.canvasW << ' '
+		    << s.key.canvasH << ' ' << s.sample.px << ' ' << s.sample.py << ' ' << s.sample.x << ' ' << s.sample.y << '\n';
+	return out.str();
 }
 
 std::string TabLayout() {
