@@ -286,8 +286,8 @@ void TestLayout() {
 	CHECK(!passwordShown && !createShown && tabs);
 	CHECK(joins2 == std::min<size_t>(view.rooms.size(), kRowsPerPage));
 	CHECK(!emptyText);
-	// On the TCP/IP screen's art, where D2R puts that screen; named by its pool slot.
-	CHECK((*layout)["fields"]["rect"]["width"].asInt() == 1162 && (*layout)["fields"]["rect"]["x"].asInt() == -581);
+	// About D2RLoader's window's width (its MainTabs are 1730), centred; named by its pool slot.
+	CHECK((*layout)["fields"]["rect"]["width"].asInt() == 1800 && (*layout)["fields"]["rect"]["x"].asInt() == -900);
 	view.slot = 9;
 	CHECK((*json::Parse(PanelLayout(view)))["name"].asString() == "d2r-rooms/Rooms9" && PanelPath(9) == "data/global/ui/layouts/d2r-rooms/Rooms9hd.json");
 	view.slot = 0;
@@ -304,7 +304,7 @@ void TestLayout() {
 		host |= a.command == "ToHost";
 		browse |= a.command == "ToBrowse";
 		const int margin = a.command == "Close" ? 40 : 0;
-		inside &= a.x >= -581 && a.x + a.width <= 581 && a.y >= 216 - margin && a.y + a.height <= 216 + 1507;
+		inside &= a.x >= -900 && a.x + a.width <= 900 && a.y >= 216 - margin && a.y + a.height <= 216 + 1500;
 	}
 	CHECK(joinAreas == std::min<size_t>(view.rooms.size(), kRowsPerPage) && close && refresh && host && browse);
 	CHECK(inside);
@@ -321,6 +321,60 @@ void TestLayout() {
 	const auto tab = json::Parse(TabLayout());
 	CHECK(tab && (*tab)["name"].asString() == kTabPanelName && (*tab)["children"][0]["name"].asString() == "Tab");
 	CHECK(TabHitAreas().size() == 1 && TabHitAreas()[0].command == "Tab");
+}
+
+// The wide D2R Rooms window (Serg, 2026-11-27: "can we make it wider"): about
+// D2RLoader's window's width, the rooms as a table, the status line inside.
+void TestWideWindow() {
+	PanelView view;
+	view.tab = true;
+	view.status = "No open rooms right now - Relay: D2R Rooms active - the bridge is enabled (mode auto)";
+	view.rooms = *ParseRooms(R"({"rooms":[
+		{"room_id":"a","code":"EL9A","name":"Baal runs with a long name","mod":{"id":"d2r-vr","version":"0.225.0"},"difficulty":"hell",
+		 "mode":"hardcore","act":5,"max_players":8,"players_count":3,"locked":true,
+		 "players":[{"name":"Kaela","class":"paladin","level":92,"act":5,"host":true},{"name":"Ama","class":"amazon","level":88,"act":5}]},
+		{"room_id":"b","code":"K7QX","name":"cows","mod":{"id":"d2r-pcvr","version":"0.3.36"},"difficulty":"normal","mode":"softcore",
+		 "act":1,"max_players":8,"players_count":1,"locked":false,"players":[],"relay_url":"wss://r.example.net"}]})");
+	const auto layout = json::Parse(PanelLayout(view));
+	CHECK(layout.has_value());
+	const int width = (*layout)["fields"]["rect"]["width"].asInt(), height = (*layout)["fields"]["rect"]["height"].asInt();
+	CHECK(width >= 1730 && width <= 1920 && height <= 1600);
+	// Every piece inside the window; the status line almost as wide as it; one cell per column a room.
+	bool inside = true, statusWide = false;
+	int names = 0, games = 0, mods = 0, players = 0, joins = 0, heads = 0;
+	for (size_t i = 0; i < (*layout)["children"].size(); ++i) {
+		const json::Value& c = (*layout)["children"][i];
+		const std::string name = c["name"].asString();
+		const json::Value& r = c["fields"]["rect"];
+		if (r.kind() == json::Value::Kind::Object) {
+			const int x = r["x"].asInt(), y = r["y"].asInt(), w = r["width"].asInt(), h = r["height"].asInt();
+			inside &= x >= 0 && y >= 0 && x + w <= width && y + h <= height;
+			if (name == "Status") statusWide = w >= width - 200;
+		}
+		names += name.rfind("Room", 0) == 0;
+		games += name.rfind("Game", 0) == 0;
+		mods += name.rfind("Mod", 0) == 0;
+		players += name.rfind("Players", 0) == 0;
+		joins += name.rfind("Join", 0) == 0;
+		heads += name.rfind("Head", 0) == 0;
+	}
+	CHECK(inside && statusWide);
+	CHECK(names == 2 && games == 2 && mods == 2 && players == 2 && joins == 2 && heads >= 4);
+	// The plugin's hit areas do not overlap, and Join is right of the table's columns.
+	const std::vector<HitArea> areas = WindowHitAreas(view);
+	bool overlap = false;
+	for (size_t i = 0; i < areas.size(); ++i)
+		for (size_t j = i + 1; j < areas.size(); ++j) {
+			const HitArea &a = areas[i], &b = areas[j];
+			overlap |= a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+		}
+	CHECK(!overlap && areas.size() == 2 + 1 + 3);  // two Joins, Close, Host Game / Browse Games / Refresh
+	for (const HitArea& a : areas)
+		if (a.command == "Join") CHECK(a.x - (-width / 2) >= 1180 + 140);
+	// A full page: five rows above the bottom rule.
+	view.rooms.resize(kRowsPerPage, view.rooms[0]);
+	for (const HitArea& a : WindowHitAreas(view))
+		if (a.command == "Join") CHECK(a.y + a.height <= 216 + 1085 - 30);
 }
 
 // Clicks on the tab button: its middle is 695,238 in layout units.
@@ -372,15 +426,19 @@ void TestToLayout() {
 	const std::vector<std::pair<int, int>> aimed {{1259, 364}, {1246, 375}, {1237, 376}, {1229, 396}, {1223, 386}, {1262, 375},
 	                                              {1253, 392}, {1260, 366}, {1250, 377}, {1201, 368}, {1371, 376}};
 	for (const auto& [px, py] : aimed) CHECK(onTab(ToLayout(learned, px, py)));
-	// ...and at the D2R Rooms window's close button (1179,370) and its Refresh (1122,1278).
+	// ...and a press on the middle of the D2R Rooms window's close button and Refresh.
 	const PanelView shown;
-	const auto hit = [&](const char* command, int px, int py) {
-		const LayoutPoint p = ToLayout(learned, px, py);
-		for (const HitArea& a : WindowHitAreas(shown))
-			if (p.x >= a.x && p.x < a.x + a.width && p.y >= a.y && p.y < a.y + a.height) return a.command == command;
+	const auto hit = [&](const char* command) {
+		for (const HitArea& target : WindowHitAreas(shown)) {
+			if (target.command != command) continue;
+			const PixelPoint px = FromLayout(learned, target.x + target.width / 2.0, target.y + target.height / 2.0);
+			const LayoutPoint p = ToLayout(learned, px.x, px.y);
+			for (const HitArea& a : WindowHitAreas(shown))
+				if (p.x >= a.x && p.x < a.x + a.width && p.y >= a.y && p.y < a.y + a.height) return a.command == command;
+		}
 		return false;
 	};
-	CHECK(hit("Close", 1179, 370) && hit("Refresh", 1122, 1278));
+	CHECK(hit("Close") && hit("Refresh"));
 	// One press on BROWSE GAMES: one row, the guess stays.
 	learned = LearnMap(guess, 1920, 1920, {press("ShowBrowse", 80, -40)});
 	CHECK(learned.kx == guess.kx && learned.ky == guess.ky && learned.top == guess.top);
@@ -779,6 +837,7 @@ int main(int argc, char** argv) {
 	TestResolveMod();
 	TestBoard();
 	TestLayout();
+	TestWideWindow();
 	TestToLayout();
 	TestBand();
 	TestSafeArea();

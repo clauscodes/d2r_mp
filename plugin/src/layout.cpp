@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <optional>
 #include <iterator>
 #include <sstream>
@@ -108,65 +109,123 @@ struct ButtonSpec {
 	std::string label, command, argument;
 };
 
-constexpr int kCloseX = 1075, kCloseY = 9;  // the art's close button, about 70 x 70
-
-// The D2R Rooms window: in place of D2RLoader's Multiplayer window, where D2R
-// puts its own TCP/IP screen, on that screen's art (PANEL\TCP_IP\TCP_IP_PanelBG
-// draws at its own size, 1162 x 1507, and does not stretch). Everything is on
-// that art's grid: the list in its upper box, a hint in its lower box, the
-// buttons on its bottom row. In the front-end a plugin panel gets no clicks
-// and no typing, so the plugin matches clicks against WindowButtons itself,
-// and the window has no text field (a password goes into D2RLoader's Direct
-// Join box).
-constexpr int kWindowLeft = -kPanelWidth / 2;  // anchored at (0.5, 0.1)
+// The D2R Rooms window: in place of D2RLoader's Multiplayer window and about
+// its width (its MainTabs are 1730 wide), built from the game's own pieces as
+// D2RLoader's window is: no single art of the game is that wide, and an image
+// only scales evenly. A dark backing with the game's gold edge (a
+// RectangleWidget, as the game's Join Game list draws its selection), the
+// tooltip frame's gold corners, the pause menu's gold rules, the game's title
+// style, close button and front-end buttons. The rooms are a table: name,
+// game, mod, players, connection, Join; the players' line under each name. In
+// the front-end a plugin panel gets no clicks and no typing, so the plugin
+// matches clicks against WindowButtons itself, and the window has no text
+// field (a password goes into D2RLoader's Direct Join box).
+constexpr int kWindowWidth = 1800, kWindowHeight = 1500;
+constexpr int kWindowLeft = -kWindowWidth / 2;  // anchored at (0.5, 0.1)
 constexpr int kWindowTop = 216;
-// Measured on the art in the game: its inner edges are near x 74 and 1088, a
-// button is about 350 x 85. So two buttons a row: left at 74, right at 730.
-constexpr int kLeftX = 74, kRightX = 730;
-constexpr int kTextX = 90, kTextW = 620;
+constexpr int kInnerLeft = 70, kInnerRight = kWindowWidth - 70;
+constexpr int kCloseX = kWindowWidth - 105, kCloseY = 18;  // closebtn_4x, about 70 x 70
+// The table: a header row, then kRowsPerPage rows.
+constexpr int kHeaderY = 228;
+constexpr int kWindowRowTop = 300, kWindowRowStep = 150;
+struct Column {
+	const char* title;
+	int x, width;
+};
+constexpr Column kColName {"Room", 90, 480}, kColGame {"Game", 590, 240}, kColMod {"Mod", 850, 310}, kColPlayers {"Players", 1180, 140};
+constexpr int kJoinX = kInnerRight - kButtonWidth - 10;  // 1370
+constexpr int kConnectionY = 60;                    // the second line of a row, right part
+// The bottom: a hint, then the buttons on one row.
+constexpr int kHintY = 1085, kButtonRowY = 1360;
+constexpr int kLeftX = kInnerLeft, kMiddleX = kInnerLeft + kButtonWidth + 40, kRightX = kJoinX;
+
+std::string Image(const std::string& name, const char* file, int x, int y, double scale = 1, int frame = -1) {
+	char s[32];
+	std::snprintf(s, sizeof(s), "%.3g", scale);
+	return "{\"type\":\"ImageWidget\",\"name\":" + json::Quote(name) + ",\"fields\":{\"rect\":{\"x\":" + std::to_string(x) + ",\"y\":" +
+		std::to_string(y) + (scale != 1 ? std::string(",\"scale\":") + s : "") + "},\"filename\":" + json::Quote(file) +
+		(frame >= 0 ? ",\"frame\":" + std::to_string(frame) : "") + "}}";
+}
+
+std::string Rectangle(const std::string& name, int x, int y, int w, int h, const char* color, const char* border) {
+	return "{\"type\":\"RectangleWidget\",\"name\":" + json::Quote(name) + ",\"fields\":{\"rect\":" + Rect(x, y, w, h) + ",\"color\":" + color +
+		",\"borderColor\":" + border + "}}";
+}
+
+// The game's gold (its Join Game selection's edge) and a stone-dark backing.
+constexpr const char* kGold = "[0.84,0.73,0.48,1.0]";
+constexpr const char* kGoldFaint = "[0.84,0.73,0.48,0.35]";
+constexpr const char* kBacking = "[0.035,0.03,0.025,0.94]";
+constexpr const char* kRowShade = "[1.0,0.9,0.7,0.04]";
+constexpr const char* kNone = "[0.0,0.0,0.0,0.0]";
 
 std::vector<ButtonSpec> WindowButtons(const PanelView& view, int pages, int page) {
 	std::vector<ButtonSpec> b;
 	const size_t first = static_cast<size_t>(page) * kRowsPerPage;
 	for (int i = 0; i < kRowsPerPage && first + i < view.rooms.size(); ++i)
-		b.push_back({"Join" + std::to_string(i), kRightX, kRowTop + i * kRowStep + 15, "Join", "Join", std::to_string(i)});
-	if (view.hosting) b.push_back({"CloseRoom", kRightX, 1260, "Close room", "CloseRoom", ""});
-	else if (pages > 1) b.push_back({"More", kRightX, 1260, "More", "Next", ""});
-	else b.push_back({"Refresh", kRightX, 1260, "Refresh", "Refresh", ""});
-	b.push_back({"HostTab", kLeftX, 1390, "Host Game", "ToHost", ""});
-	b.push_back({"BrowseTab", kRightX, 1390, "Browse Games", "ToBrowse", ""});
+		b.push_back({"Join" + std::to_string(i), kJoinX, kWindowRowTop + i * kWindowRowStep + 20, "Join", "Join", std::to_string(i)});
+	b.push_back({"HostTab", kLeftX, kButtonRowY, "Host Game", "ToHost", ""});
+	b.push_back({"BrowseTab", kMiddleX, kButtonRowY, "Browse Games", "ToBrowse", ""});
+	if (view.hosting) b.push_back({"CloseRoom", kRightX, kButtonRowY, "Close room", "CloseRoom", ""});
+	else if (pages > 1) b.push_back({"More", kRightX, kButtonRowY, "More", "Next", ""});
+	else b.push_back({"Refresh", kRightX, kButtonRowY, "Refresh", "Refresh", ""});
 	return b;
 }
 
 std::string WindowLayout(const PanelView& view, int pages, int page) {
 	std::vector<std::string> children;
-	children.push_back("{\"type\":\"GridImageWidget\",\"name\":\"Background\",\"fields\":{\"filename\":\"PANEL\\\\TCP_IP\\\\TCP_IP_PanelBG\"}}");
-	children.push_back("{\"type\":\"TextBoxWidget\",\"name\":\"Title" + std::to_string(view.generation) +
-		"\",\"fields\":{\"rect\":\"$InGamePanelTitleRect\",\"text\":\"D2R Rooms\",\"style\":\"$StyleTitleBlock\"}}");
-	children.push_back(
-		"{\"type\":\"ButtonWidget\",\"name\":\"Close\",\"fields\":{\"rect\":" + Rect(kCloseX, kCloseY) + ",\"filename\":\"PANEL\\\\closebtn_4x\","
-		"\"hoveredFrame\":3}}");
+	// The frame.
+	children.push_back(Rectangle("Background", 0, 0, kWindowWidth, kWindowHeight, kBacking, kGold));
+	const double corner = 1.5;  // the tooltip frame's 48-unit corners: TL 0, TR 2, BL 6, BR 8
+	const int c = static_cast<int>(48 * corner);
+	children.push_back(Image("CornerTL", "PANEL\\TooltipBorder\\TooltipBorder", 0, 0, corner, 0));
+	children.push_back(Image("CornerTR", "PANEL\\TooltipBorder\\TooltipBorder", kWindowWidth - c, 0, corner, 2));
+	children.push_back(Image("CornerBL", "PANEL\\TooltipBorder\\TooltipBorder", 0, kWindowHeight - c, corner, 6));
+	children.push_back(Image("CornerBR", "PANEL\\TooltipBorder\\TooltipBorder", kWindowWidth - c, kWindowHeight - c, corner, 8));
+	children.push_back("{\"type\":\"TextBoxWidget\",\"name\":\"Title" + std::to_string(view.generation) + "\",\"fields\":{\"rect\":" +
+		Rect(0, 30, kWindowWidth, 80) + ",\"text\":\"D2R Rooms\",\"style\":\"$StyleTitleBlock\"}}");
+	children.push_back("{\"type\":\"ButtonWidget\",\"name\":\"Close\",\"fields\":{\"rect\":" + Rect(kCloseX, kCloseY) +
+		",\"filename\":\"PANEL\\\\closebtn_4x\",\"hoveredFrame\":3}}");
 	if (!view.status.empty())
-		children.push_back(Text("Status", Rect(kTextX, 240, 982, 60), view.status, Style("$SmallFontSize", "center", false)));
+		children.push_back(Text("Status", Rect(kInnerLeft, 120, kInnerRight - kInnerLeft, 80), view.status, Style("$SmallFontSize", "center", true)));
+	const int ruleX = (kWindowWidth - 1663) / 2;  // PauseMenu\Divider is 1663 wide
+	children.push_back(Image("RuleTop", "PauseMenu\\Divider", ruleX, 205));
 
-	// Two lines a room: its name, then difficulty, players, version, connection
-	// (wrapping to a second line); the list box holds five.
+	// The table's header and its rows.
+	for (const Column& col : {kColName, kColGame, kColMod, kColPlayers})
+		children.push_back(Text(std::string("Head") + col.title, Rect(col.x, kHeaderY, col.width, 50), col.title, Style("$SmallFontSize", "left", false)));
+	children.push_back(Rectangle("HeadRule", kInnerLeft, kHeaderY + 58, kInnerRight - kInnerLeft, 2, kGoldFaint, kNone));
 	const size_t first = static_cast<size_t>(page) * kRowsPerPage;
 	for (int i = 0; i < kRowsPerPage && first + i < view.rooms.size(); ++i) {
-		const RoomColumns c = Columns(view.rooms[first + i]);
-		const int y = kRowTop + i * kRowStep;
+		const Room& room = view.rooms[first + i];
+		const RoomColumns cols = Columns(room);
+		const int y = kWindowRowTop + i * kWindowRowStep;
 		const std::string n = std::to_string(i);
-		children.push_back(Text("Room" + n, Rect(kTextX, y, kTextW, 60), c.name, Style("$MediumFontSize", "left", false)));
-		const std::string details = c.game + " - " + c.players + " - " + c.version + " - " + c.connection;
-		children.push_back(Text("Details" + n, Rect(kTextX, y + 55, kTextW, 75), details, Style("$SmallFontSize", "left", true)));
+		if (i % 2 == 0) children.push_back(Rectangle("Shade" + n, kInnerLeft, y, kInnerRight - kInnerLeft, kWindowRowStep - 10, kRowShade, kNone));
+		// No empty text widgets (0.3.2: a room row with one never showed).
+		const auto cell = [&](const std::string& name, int x, int dy, int w, const std::string& text, const char* size) {
+			if (!text.empty()) children.push_back(Text(name, Rect(x, y + dy, w, 60), text, Style(size, "left", false)));
+		};
+		cell("Room" + n, kColName.x, 8, kColName.width, cols.name, "$MediumFontSize");
+		cell("Game" + n, kColGame.x, 8, kColGame.width, cols.game, "$SmallFontSize");
+		cell("Mod" + n, kColMod.x, 8, kColMod.width, cols.version, "$SmallFontSize");
+		cell("Players" + n, kColPlayers.x, 8, kColPlayers.width, cols.players, "$SmallFontSize");
+		// The second line: who plays under the name and the game (two lines at most), the connection under the mod.
+		cell("Connection" + n, kColMod.x, kConnectionY + 8, kColPlayers.x + kColPlayers.width - kColMod.x, cols.connection, "$SmallFontSize");
+		const std::string who = PlayersLine(room);
+		if (!who.empty())
+			children.push_back(Text("Who" + n, Rect(kColName.x, y + kConnectionY + 4, kColMod.x - 30 - kColName.x, 76), who, Style("$SmallFontSize", "left", true)));
 	}
-	children.push_back(Text("Hint", Rect(kTextX, 1200, kTextW, 150),
+
+	// The bottom: a hint, the buttons.
+	children.push_back(Image("RuleBottom", "PauseMenu\\Divider", ruleX, kHintY - 30));
+	children.push_back(Text("Hint", Rect(kColName.x, kHintY, kInnerRight - kColName.x - 20, 230),
 	                        view.hosting ? view.hostingText
 	                                     : "Host with Create Game in Host Game: the game is listed here, through a relay when friends cannot reach "
 	                                       "you. A room's password goes into Direct Join.",
 	                        Style("$SmallFontSize", "left", true)));
 	for (const ButtonSpec& b : WindowButtons(view, pages, page)) children.push_back(Button(b.name, b.x, b.y, b.label, b.command, b.argument));
-	return Panel(PanelName(view.slot), "{\"x\":0.5,\"y\":0.1}", Rect(kWindowLeft, 0, kPanelWidth, kPanelHeight), kLoaderPriority, children);
+	return Panel(PanelName(view.slot), "{\"x\":0.5,\"y\":0.1}", Rect(kWindowLeft, 0, kWindowWidth, kWindowHeight), kLoaderPriority, children);
 }
 
 }  // namespace
