@@ -417,7 +417,9 @@ void TestBand() {
 	CHECK(!IsBand(1280, 1280, 1280, 1280));  // the square menu
 	CHECK(!IsBand(1920, 1080, 1920, 1080));  // a flat 16:9 game
 	CHECK(!IsBand(1280, 1280, 0, 0));        // no answer
-	CHECK(!IsBand(1280, 1280, 1000, 562));   // not as wide as the picture
+	CHECK(IsBand(1280, 1280, 1920, 1080));   // in the game's pixels, bigger than the window (Serg 13:13)
+	CHECK(IsBand(1280, 1280, 1000, 562));    // smaller: still a band by its shape
+	CHECK(!IsBand(2560, 1080, 1920, 1080));  // an ultrawide picture: narrower than it
 	CHECK(!IsBand(1280, 1280, 1280, 1000));  // not 16:9
 
 	const ClickMap band = BandMap(1280, 1280, 1280, 1280, 1280, 720);
@@ -520,6 +522,80 @@ void TestSafeArea() {
 		const LayoutPoint p = ToLayout(band, px, py);
 		CHECK(p.y >= 282 && p.y < 403 && std::abs(p.x - LoaderTarget("ShowBrowse")->x) < 115);
 	}
+}
+
+// Serg's PC, 13:13 (0.9.14): the 1280x1280 window, the game answering
+// 1920x1080 (its 1920 render size's band), the overlay 1280x1280. 0.9.14 took
+// the answer for no band (not as wide as the 1280 picture) and centred the
+// interface on the square: every click came out at y -500 .. -900.
+void TestBandBiggerThanWindow() {
+	const ClickMap band = BandMap(1280, 1280, 1280, 1280, 1920, 1080, 0.8);
+	CHECK(std::abs(band.kx - 0.8 / 3) < 1e-9 && std::abs(band.ky - 0.8 / 3) < 1e-9 && band.cx == 640 && std::abs(band.top - 72) < 1e-9);
+	const HitArea tab = TabHitAreas()[0];
+	const auto onTab = [&](const ClickMap& map, double px, double py) {
+		const LayoutPoint p = ToLayout(map, px, py);
+		return p.x >= tab.x && p.x < tab.x + tab.width && p.y >= tab.y && p.y < tab.y + tab.height;
+	};
+	// Every click he aimed at the D2R Rooms tab (13:13:21 - 13:13:40).
+	const std::vector<std::pair<int, int>> aimed {{821, 136}, {822, 131}, {820, 134}, {821, 139}, {823, 143}, {822, 143},
+	                                              {821, 145}, {818, 152}, {820, 151}, {843, 145}, {849, 140}};
+	const ClickMap old = PictureMap(1280, 1280, 1280, 1280, 0.8);  // what 0.9.14 used
+	for (const auto& [px, py] : aimed) CHECK(onTab(band, px, py) && !onTab(old, px, py));
+	// D2RLoader's own close button took 888,115 (its corner, right of the tabs' row, above it).
+	const LayoutPoint close = ToLayout(band, 888, 115);
+	CHECK(close.x > 865 && close.y < 282);
+}
+
+// A VR mod's block (ui_band.h): the band in window pixels, at the click.
+void TestSharedBand() {
+	UiBandBlock b {};
+	b.magic = kUiBandMagic;
+	b.size = sizeof(UiBandBlock);
+	b.seq = 2;
+	b.active = 1;
+	b.left = 0;
+	b.top = 0;
+	b.width = 1280;
+	b.height = 720;
+	b.canvasW = 1920;
+	b.canvasH = 1080;
+	CHECK(CheckUiBand(b).has_value());
+	// The same map as the game's answer gives on that window.
+	const ClickMap shared = SharedBandMap(b, 0.8), game = BandMap(1280, 1280, 1280, 1280, 1920, 1080, 0.8);
+	CHECK(std::abs(shared.kx - game.kx) < 1e-9 && std::abs(shared.ky - game.ky) < 1e-9 && shared.cx == game.cx && std::abs(shared.top - game.top) < 1e-9);
+	// Its own safe share wins over Settings.json's.
+	b.safe = 1.0f;
+	CHECK(std::abs(SharedBandMap(b, 0.8).ky - 1.0 / 3) < 1e-6 && std::abs(SharedBandMap(b, 0.8).top) < 1e-6);
+	b.safe = 0;
+	// No canvas size: the rect's own; a rect lower in the window and stretched (a 2496x2688 picture in a square window).
+	UiBandBlock own = b;
+	own.canvasW = own.canvasH = 0;
+	CHECK(std::abs(SharedBandMap(own, 1.0).ky - 1.0 / 3) < 1e-9);
+	UiBandBlock stretched = b;
+	stretched.top = 100;
+	stretched.width = 1280;
+	stretched.height = 669;  // 1404 rows of 2688 in 1280
+	stretched.canvasW = 2496;
+	stretched.canvasH = 1404;
+	const ClickMap s = SharedBandMap(stretched, 1.0);
+	CHECK(std::abs(s.kx - 1280.0 / 3840) < 1e-3 && std::abs(s.ky - 0.65 * 669 / 1404) < 1e-3 && std::abs(s.top - (100 + 669 / 2.0 - 1080 * s.ky)) < 1e-9);
+	// Torn, half-written or foreign blocks are not used; an inactive one is (it says "no band").
+	UiBandBlock bad = b;
+	bad.seq = 3;
+	CHECK(!CheckUiBand(bad));
+	bad = b;
+	bad.magic = 0;
+	CHECK(!CheckUiBand(bad));
+	bad = b;
+	bad.size = 40;
+	CHECK(!CheckUiBand(bad));
+	bad = b;
+	bad.width = 0;
+	CHECK(!CheckUiBand(bad));
+	UiBandBlock off = b;
+	off.active = 0;
+	off.width = off.height = 0;
+	CHECK(CheckUiBand(off).has_value() && !CheckUiBand(off)->active);
 }
 
 // The game's client-size query found in D2R.exe's code, as it is and with a
@@ -706,6 +782,8 @@ int main(int argc, char** argv) {
 	TestToLayout();
 	TestBand();
 	TestSafeArea();
+	TestBandBiggerThanWindow();
+	TestSharedBand();
 	TestClientSizeQuery();
 	TestPlayerCount();
 	TestRelay();

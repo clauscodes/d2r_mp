@@ -26,12 +26,19 @@ rooms (relay mark, VR version, players, Join, the password of a locked room).
 D2RLoader builds its window in its code and it is modal: a plugin cannot add
 to it, and clicks there never reach a plugin's button. So the tab button is
 the plugin's own panel at measured coordinates, and the plugin matches the
-cursor against it on each click. The game lays its interface out in the size
+cursor against it on each click. A VR mod that lays the menus out somewhere
+other than the whole window can say where, in a 48-byte shared-memory block
+(`Local\D2RRooms.UiBand.v1.<game pid>`, layout in
+[src/ui_band.h](src/ui_band.h)): its rect in window pixels, the game's own
+size for it and the safe area. The plugin reads it at each click and it wins
+over everything below. Without it, the game lays its interface out in the size
 its client-size query answers (the game's GetClientRect of its window, found
 in D2R.exe's code by its bytes; a VR mod's hook on its first bytes is
-allowed). When that answer is a 16:9 band as wide as the picture and lower
-than it (D2R VR's menus laid out at 16:9 at the picture's top), the map is
-the band's, exactly. Either way the game draws its whole interface shrunk to
+allowed). When that answer is 16:9 and wider than the picture's shape (D2R
+VR's menus laid out at 16:9 at the picture's top; the answer is in the game's
+pixels, which may be more than the window's), the map is that band across the
+window's width, from its top. Each click's log line says which source the
+map came from. Either way the game draws its whole interface shrunk to
 its safe area round the middle (Options: "Safe Screen Percent" in D2R's
 `Settings.json` in Saved Games), so the plugin reads that too.
 

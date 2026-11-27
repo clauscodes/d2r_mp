@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "board.h"
+#include "ui_band.h"
 
 namespace rooms {
 
@@ -106,13 +107,25 @@ struct ClickSample {
 std::optional<LayoutPoint> LoaderTarget(std::string_view command);
 // The game's client-size query (GetClientRect of its window, the size the
 // game lays its interface out in) answered `canvasW` x `canvasH` on a
-// `pictureW` x `pictureH` picture: a 16:9 band as wide as the picture and
-// lower than it is D2R VR's menus laid out at 16:9 at the picture's top.
+// `pictureW` x `pictureH` picture (the overlay's size, else the window's): a
+// 16:9 answer wider than the picture's shape is D2R VR's menus laid out at
+// 16:9 at the picture's top. The answer is in the game's own pixels, which
+// may be bigger than the window (a 1920x1080 band for a 1920 render size in a
+// 1280 window), so only its shape is compared, never the window's size alone.
 bool IsBand(int pictureW, int pictureH, int canvasW, int canvasH);
 // The map for that band: 3840 x 2160 units fitted into the band from the
-// picture's top and shrunk to `safe` round the band's middle, the picture
-// stretched over the window (0 = the window's).
+// window's top and shrunk to `safe` round the band's middle. The band spans
+// the window's width (stretched on each axis with the picture when it is as
+// wide as the known picture).
 ClickMap BandMap(int windowW, int windowH, int pictureW, int pictureH, int canvasW, int canvasH, double safe = 1.0);
+
+// A VR mod's word on where the interface is (ui_band.h): the block when it is
+// whole and consistent, else none.
+std::optional<UiBandBlock> CheckUiBand(const UiBandBlock& block);
+// The map for an active block: 3840 x 2160 units fitted into its canvas,
+// shrunk to its safe share (or `safe` when it gives none) round the middle,
+// and placed on its rect in window pixels.
+ClickMap SharedBandMap(const UiBandBlock& band, double safe);
 
 // The presses' rows must be this far apart (units) to give a height.
 inline constexpr int kMinRowSpan = 300;

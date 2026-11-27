@@ -282,17 +282,38 @@ std::optional<LayoutPoint> LoaderTarget(std::string_view command) {
 }
 
 bool IsBand(int pictureW, int pictureH, int canvasW, int canvasH) {
-	return pictureW > 0 && canvasW == pictureW && canvasH > 0 && canvasH < pictureH && std::abs(canvasH - canvasW * 9 / 16) <= 1;
+	if (pictureW <= 0 || pictureH <= 0 || canvasW <= 0 || canvasH <= 0 || std::abs(canvasH - canvasW * 9 / 16) > 1) return false;
+	// Wider than the picture's shape, by more than rounding.
+	return static_cast<double>(canvasH) * pictureW < 0.98 * static_cast<double>(canvasW) * pictureH;
 }
 
 ClickMap BandMap(int windowW, int windowH, int pictureW, int pictureH, int canvasW, int canvasH, double safe) {
-	if (pictureW <= 0 || pictureH <= 0) {
-		pictureW = windowW;
-		pictureH = windowH;
+	// The answer is in the game's own pixels. When the picture's size is known
+	// and the band is as wide as it, the picture is stretched over the window
+	// on each axis; otherwise (the overlay gives the window's size, a render
+	// size bigger than the window) the band spans the window's width and keeps
+	// its shape.
+	double sx = canvasW > 0 ? static_cast<double>(windowW) / canvasW : 1, sy = sx;
+	if (pictureW > 0 && pictureH > 0 && pictureW == canvasW) {
+		sx = static_cast<double>(windowW) / pictureW;
+		sy = static_cast<double>(windowH) / pictureH;
 	}
-	const double sx = static_cast<double>(windowW) / pictureW, sy = static_cast<double>(windowH) / pictureH;
 	const double k = std::min(canvasW / 3840.0, canvasH / 2160.0) * safe;
 	return {k * sx, k * sy, canvasW / 2.0 * sx, (canvasH / 2.0 - 1080 * k) * sy};
+}
+
+std::optional<UiBandBlock> CheckUiBand(const UiBandBlock& block) {
+	if (block.magic != kUiBandMagic || block.size != sizeof(UiBandBlock) || (block.seq & 1) != 0) return std::nullopt;
+	if (block.active && (block.width <= 0 || block.height <= 0 || block.width > 32768 || block.height > 32768)) return std::nullopt;
+	return block;
+}
+
+ClickMap SharedBandMap(const UiBandBlock& band, double safe) {
+	if (band.safe > 0 && band.safe <= 1) safe = band.safe;
+	const double cw = band.canvasW ? band.canvasW : band.width, ch = band.canvasH ? band.canvasH : band.height;
+	const double k = std::min(cw / 3840.0, ch / 2160.0) * safe;  // in the game's pixels
+	const double kx = k * band.width / cw, ky = k * band.height / ch;
+	return {kx, ky, band.left + band.width / 2.0, band.top + band.height / 2.0 - 1080 * ky};
 }
 
 ClickMap LearnMap(const ClickMap& guess, int windowW, int windowH, const std::vector<ClickSample>& samples) {

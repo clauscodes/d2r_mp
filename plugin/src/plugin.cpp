@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -786,14 +787,76 @@ MapKey CurrentKey(int w, int h) {
 	return key;
 }
 
-ClickMap CurrentMap(const MapKey& key) {
-	const int pw = key.pictureW > 0 ? key.pictureW : key.windowW, ph = key.pictureH > 0 ? key.pictureH : key.windowH;
+// A VR mod's word on where the interface is (ui_band.h), read at the click.
+HANDLE g_uiBandMapping = nullptr;
+const volatile UiBandBlock* g_uiBand = nullptr;
+
+std::optional<UiBandBlock> ReadSharedBand() {
+	if (!g_uiBand) {
+		const std::wstring name = kUiBandNamePrefix + std::to_wstring(GetCurrentProcessId());
+		g_uiBandMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, name.c_str());
+		if (!g_uiBandMapping) return std::nullopt;
+		g_uiBand = static_cast<const volatile UiBandBlock*>(MapViewOfFile(g_uiBandMapping, FILE_MAP_READ, 0, 0, sizeof(UiBandBlock)));
+		if (!g_uiBand) {
+			CloseHandle(g_uiBandMapping);
+			g_uiBandMapping = nullptr;
+			return std::nullopt;
+		}
+		Log("clicks: a VR mod tells where the interface is (shared block %ls)", name.c_str());
+	}
+	for (int attempt = 0; attempt < 4; ++attempt) {
+		const uint32_t before = g_uiBand->seq;
+		std::atomic_thread_fence(std::memory_order_acquire);
+		UiBandBlock copy {};
+		copy.magic = g_uiBand->magic;
+		copy.size = g_uiBand->size;
+		copy.active = g_uiBand->active;
+		copy.left = g_uiBand->left;
+		copy.top = g_uiBand->top;
+		copy.width = g_uiBand->width;
+		copy.height = g_uiBand->height;
+		copy.canvasW = g_uiBand->canvasW;
+		copy.canvasH = g_uiBand->canvasH;
+		copy.safe = g_uiBand->safe;
+		std::atomic_thread_fence(std::memory_order_acquire);
+		copy.seq = g_uiBand->seq;
+		if (copy.seq == before && (before & 1) == 0) return CheckUiBand(copy);
+		Sleep(0);
+	}
+	return std::nullopt;
+}
+
+// The map for a click and where it came from (logged with every click).
+ClickMap CurrentMap(const MapKey& key, std::string* source) {
 	const double safe = key.safePercent / 100.0;
-	if (IsBand(pw, ph, key.canvasW, key.canvasH)) return BandMap(key.windowW, key.windowH, pw, ph, key.canvasW, key.canvasH, safe);
+	const std::optional<UiBandBlock> shared = ReadSharedBand();
+	if (shared && shared->active) {
+		if (source) {
+			char text[160];
+			std::snprintf(text, sizeof(text), "the VR mod's band %d,%d %dx%d (game %ux%u)", shared->left, shared->top, shared->width, shared->height,
+			              shared->canvasW, shared->canvasH);
+			*source = text;
+		}
+		return SharedBandMap(*shared, safe);
+	}
+	const int pw = key.pictureW > 0 ? key.pictureW : key.windowW, ph = key.pictureH > 0 ? key.pictureH : key.windowH;
+	// A VR mod that says "not now" outranks the game's answer.
+	if (!shared && IsBand(pw, ph, key.canvasW, key.canvasH)) {
+		if (source) *source = "the game's band (its client-size answer)";
+		return BandMap(key.windowW, key.windowH, pw, ph, key.canvasW, key.canvasH, safe);
+	}
 	std::vector<ClickSample> samples;
 	for (const KeyedSample& s : g_clickSamples)
 		if (s.key == key) samples.push_back(s.sample);
+	if (source) {
+		*source = shared ? "the VR mod: no band; " : "";
+		*source += samples.empty() ? "the picture" : "the picture and " + std::to_string(samples.size()) + " press(es)";
+	}
 	return LearnMap(PictureMap(key.windowW, key.windowH, key.pictureW, key.pictureH, safe), key.windowW, key.windowH, samples);
+}
+
+ClickMap CurrentMap(const MapKey& key) {
+	return CurrentMap(key, nullptr);
 }
 
 ClickMap CurrentMap(int w, int h) {
@@ -1602,21 +1665,22 @@ void HandleClick() {
 	RECT rc {};
 	if (!CursorInClient(&p, &rc)) return;
 	const MapKey key = CurrentKey(rc.right, rc.bottom);
-	const ClickMap map = CurrentMap(key);
+	std::string source;
+	const ClickMap map = CurrentMap(key, &source);
 	const auto [x, y] = ToLayout(map, p.x, p.y);
 	const std::vector<HitArea> areas = g_tabButtonOpen ? TabHitAreas() : WindowHitAreas(g_shownView);
 	for (const HitArea& a : areas) {
 		if (x < a.x || x >= a.x + a.width || y < a.y || y >= a.y + a.height) continue;
-		Log("click: %d,%d -> %s %s", x, y, a.command.c_str(), a.argument.c_str());
+		Log("click: %d,%d -> %s %s (map from %s)", x, y, a.command.c_str(), a.argument.c_str(), source.c_str());
 		g_lastClickCommand = a.command;
 		g_lastClickAt = std::chrono::steady_clock::now();
 		HandleOwn(a.command, a.argument);
 		return;
 	}
-	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d, interface %dx%d%s, safe area %d %%, %.3f x %.3f px a unit, top %.0f)", x, y, rc.right,
-	    rc.bottom, p.x, p.y, key.pictureW, key.pictureH, key.canvasW, key.canvasH,
-	    IsBand(key.pictureW > 0 ? key.pictureW : key.windowW, key.pictureH > 0 ? key.pictureH : key.windowH, key.canvasW, key.canvasH) ? " band" : "",
-	    key.safePercent, map.kx, map.ky, map.top);
+	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d, game's answer %dx%d, safe area %d %%, map from %s: %.3f x %.3f px a unit, "
+	    "middle %.0f, top %.0f)",
+	    x, y, rc.right, rc.bottom, p.x, p.y, key.pictureW, key.pictureH, key.canvasW, key.canvasH, key.safePercent, source.c_str(), map.kx, map.ky,
+	    map.cx, map.top);
 }
 
 D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContext*, const D2RL::SharedEvents::UiMessageEvent* event, void*) noexcept {
