@@ -19,16 +19,21 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <iphlpapi.h>
+#include <shlobj.h>
+#include <knownfolders.h>
 
 #include <D2RLPlugin/api.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -742,10 +747,35 @@ std::pair<int, int> ClientSizeAnswer() {
 	return w > 0 && h > 0 && w <= 32768 && h <= 32768 ? std::pair {w, h} : std::pair {0, 0};
 }
 
+// D2R's "Safe Screen Percent" (layout.h SafeShare) from its Settings.json in
+// Saved Games, read again at most once a second: the player may change it in
+// the game's options.
+int SafePercent() {
+	static int percent = 100;
+	static std::chrono::steady_clock::time_point next;
+	const auto now = std::chrono::steady_clock::now();
+	if (now < next) return percent;
+	next = now + std::chrono::seconds(1);
+	PWSTR folder = nullptr;
+	if (SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &folder) == S_OK && folder) {
+		const std::filesystem::path path = std::filesystem::path(folder) / L"Diablo II Resurrected" / L"Settings.json";
+		std::ifstream in(path, std::ios::binary);
+		if (in) {
+			const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+			const int read = static_cast<int>(std::lround(SafeShare(text) * 100));
+			if (read != percent) Log("clicks: the game's safe area is %d %%", read);
+			percent = read;
+		}
+	}
+	CoTaskMemFree(folder);
+	return percent;
+}
+
 MapKey CurrentKey(int w, int h) {
 	MapKey key;
 	key.windowW = w;
 	key.windowH = h;
+	key.safePercent = SafePercent();
 	D2RL::Overlay::Metrics m {};
 	m.structSize = sizeof(m);
 	if (g_overlay && g_overlay->getMetrics(g_ctx, &m) == D2RL::Overlay::Result::Success && m.screenWidth >= 1 && m.screenHeight >= 1) {
@@ -758,11 +788,12 @@ MapKey CurrentKey(int w, int h) {
 
 ClickMap CurrentMap(const MapKey& key) {
 	const int pw = key.pictureW > 0 ? key.pictureW : key.windowW, ph = key.pictureH > 0 ? key.pictureH : key.windowH;
-	if (IsBand(pw, ph, key.canvasW, key.canvasH)) return BandMap(key.windowW, key.windowH, pw, ph, key.canvasW, key.canvasH);
+	const double safe = key.safePercent / 100.0;
+	if (IsBand(pw, ph, key.canvasW, key.canvasH)) return BandMap(key.windowW, key.windowH, pw, ph, key.canvasW, key.canvasH, safe);
 	std::vector<ClickSample> samples;
 	for (const KeyedSample& s : g_clickSamples)
 		if (s.key == key) samples.push_back(s.sample);
-	return LearnMap(PictureMap(key.windowW, key.windowH, key.pictureW, key.pictureH), key.windowW, key.windowH, samples);
+	return LearnMap(PictureMap(key.windowW, key.windowH, key.pictureW, key.pictureH, safe), key.windowW, key.windowH, samples);
 }
 
 ClickMap CurrentMap(int w, int h) {
@@ -1582,10 +1613,10 @@ void HandleClick() {
 		HandleOwn(a.command, a.argument);
 		return;
 	}
-	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d, interface %dx%d%s, %.3f x %.3f px a unit, top %.0f)", x, y, rc.right, rc.bottom, p.x,
-	    p.y, key.pictureW, key.pictureH, key.canvasW, key.canvasH,
+	Log("click: %d,%d (window %ldx%ld at %ld,%ld, picture %dx%d, interface %dx%d%s, safe area %d %%, %.3f x %.3f px a unit, top %.0f)", x, y, rc.right,
+	    rc.bottom, p.x, p.y, key.pictureW, key.pictureH, key.canvasW, key.canvasH,
 	    IsBand(key.pictureW > 0 ? key.pictureW : key.windowW, key.pictureH > 0 ? key.pictureH : key.windowH, key.canvasW, key.canvasH) ? " band" : "",
-	    map.kx, map.ky, map.top);
+	    key.safePercent, map.kx, map.ky, map.top);
 }
 
 D2RL::SharedEvents::UiMessageAction __cdecl OnUiMessage(const D2RL::PluginContext*, const D2RL::SharedEvents::UiMessageEvent* event, void*) noexcept {

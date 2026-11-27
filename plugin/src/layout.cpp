@@ -251,13 +251,20 @@ PixelPoint FromLayout(const ClickMap& map, double x, double y) {
 	return {map.cx + x * map.kx, map.top + y * map.ky};
 }
 
-ClickMap PictureMap(int windowW, int windowH, int pictureW, int pictureH) {
+ClickMap PictureMap(int windowW, int windowH, int pictureW, int pictureH, double safe) {
 	if (pictureW <= 0 || pictureH <= 0) {
 		pictureW = windowW;
 		pictureH = windowH;
 	}
-	const double k = std::min(pictureW / 3840.0, pictureH / 2160.0);
+	const double k = std::min(pictureW / 3840.0, pictureH / 2160.0) * safe;
 	return {k, k, windowW / 2.0, windowH / 2.0 - 1080 * k};
+}
+
+double SafeShare(std::string_view settingsJson) {
+	const auto doc = json::Parse(settingsJson);
+	if (!doc) return 1.0;
+	const int percent = (*doc)["Safe Screen Percent"].asInt(100);
+	return std::clamp(percent, 50, 100) / 100.0;
 }
 
 LayoutPoint ToLayout(double px, double py, int windowW, int windowH, int pictureW, int pictureH) {
@@ -278,13 +285,13 @@ bool IsBand(int pictureW, int pictureH, int canvasW, int canvasH) {
 	return pictureW > 0 && canvasW == pictureW && canvasH > 0 && canvasH < pictureH && std::abs(canvasH - canvasW * 9 / 16) <= 1;
 }
 
-ClickMap BandMap(int windowW, int windowH, int pictureW, int pictureH, int canvasW, int canvasH) {
+ClickMap BandMap(int windowW, int windowH, int pictureW, int pictureH, int canvasW, int canvasH, double safe) {
 	if (pictureW <= 0 || pictureH <= 0) {
 		pictureW = windowW;
 		pictureH = windowH;
 	}
 	const double sx = static_cast<double>(windowW) / pictureW, sy = static_cast<double>(windowH) / pictureH;
-	const double k = std::min(canvasW / 3840.0, canvasH / 2160.0);
+	const double k = std::min(canvasW / 3840.0, canvasH / 2160.0) * safe;
 	return {k * sx, k * sy, canvasW / 2.0 * sx, (canvasH / 2.0 - 1080 * k) * sy};
 }
 
@@ -320,11 +327,11 @@ std::vector<KeyedSample> ParseClickSamples(std::string_view text) {
 		std::vector<double> v;
 		double d = 0;
 		while (in >> d) v.push_back(d);
-		if (v.size() != 10) continue;
+		if (v.size() != 11) continue;
 		const auto i = [&](size_t n) { return static_cast<int>(std::lround(v[n])); };
-		const MapKey key {i(0), i(1), i(2), i(3), i(4), i(5)};
+		const MapKey key {i(0), i(1), i(2), i(3), i(4), i(5), i(6)};
 		if (key.windowW <= 0 || key.windowH <= 0) continue;
-		out.push_back({key, {v[6], v[7], i(8), i(9)}});
+		out.push_back({key, {v[7], v[8], i(9), i(10)}});
 	}
 	return out;
 }
@@ -356,7 +363,7 @@ std::string ClickSamplesText(const std::vector<KeyedSample>& samples) {
 	std::ostringstream out;
 	for (const KeyedSample& s : samples)
 		out << s.key.windowW << ' ' << s.key.windowH << ' ' << s.key.pictureW << ' ' << s.key.pictureH << ' ' << s.key.canvasW << ' '
-		    << s.key.canvasH << ' ' << s.sample.px << ' ' << s.sample.py << ' ' << s.sample.x << ' ' << s.sample.y << '\n';
+		    << s.key.canvasH << ' ' << s.key.safePercent << ' ' << s.sample.px << ' ' << s.sample.py << ' ' << s.sample.x << ' ' << s.sample.y << '\n';
 	return out.str();
 }
 

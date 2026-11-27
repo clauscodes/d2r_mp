@@ -31,7 +31,9 @@ its client-size query answers (the game's GetClientRect of its window, found
 in D2R.exe's code by its bytes; a VR mod's hook on its first bytes is
 allowed). When that answer is a 16:9 band as wide as the picture and lower
 than it (D2R VR's menus laid out at 16:9 at the picture's top), the map is
-the band's, exactly.
+the band's, exactly. Either way the game draws its whole interface shrunk to
+its safe area round the middle (Options: "Safe Screen Percent" in D2R's
+`Settings.json` in Saved Games), so the plugin reads that too.
 
 Otherwise the game's picture can differ from the window (a game resolution
 below the window's, D2R VR's render size), so the plugin learns where the
@@ -43,7 +45,7 @@ follows: the guess's shape when the height is the guess's, and the window's
 whole width when the interface is taller than the guess. That second case is
 a picture stretched over the window, which is what D2R VR does to the game's
 cursor, on each axis apart. The presses are kept in `d2r-rooms-clicks.txt`
-beside the DLL, per window, picture and query answer (a square menu and a
+beside the DLL, per window, picture, query answer and safe area (a square menu and a
 16:9 band in the same window are different maps); until there are two rows,
 the guess is the overlay's picture size centred on the window. **F9** opens
 the D2R Rooms window from D2RLoader's whatever the clicks do.

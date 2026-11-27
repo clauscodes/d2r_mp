@@ -86,8 +86,13 @@ PixelPoint FromLayout(const ClickMap& map, double x, double y);
 // (`pictureW` x `pictureH`, the overlay's screen size; 0 = the window's),
 // centred on the window when the two differ (a game resolution below the
 // window's). The interface is 3840 x 2160 units fitted into the picture and
-// centred on it.
-ClickMap PictureMap(int windowW, int windowH, int pictureW, int pictureH);
+// centred on it, shrunk to `safe` of that round its middle (the game's
+// "Safe Screen Percent", SafeShare).
+ClickMap PictureMap(int windowW, int windowH, int pictureW, int pictureH, double safe = 1.0);
+// D2R's Settings.json "Safe Screen Percent" (Options: the screen's safe area)
+// as a share, 0.5..1; 1 without it. The game draws its whole interface, D2R
+// and D2RLoader's windows included, that much smaller round the middle.
+double SafeShare(std::string_view settingsJson);
 LayoutPoint ToLayout(double px, double py, int windowW, int windowH, int pictureW, int pictureH);
 
 // A press D2RLoader's window answered (its HOST GAME tab, CREATE GAME...): the
@@ -105,8 +110,9 @@ std::optional<LayoutPoint> LoaderTarget(std::string_view command);
 // lower than it is D2R VR's menus laid out at 16:9 at the picture's top.
 bool IsBand(int pictureW, int pictureH, int canvasW, int canvasH);
 // The map for that band: 3840 x 2160 units fitted into the band from the
-// picture's top, the picture stretched over the window (0 = the window's).
-ClickMap BandMap(int windowW, int windowH, int pictureW, int pictureH, int canvasW, int canvasH);
+// picture's top and shrunk to `safe` round the band's middle, the picture
+// stretched over the window (0 = the window's).
+ClickMap BandMap(int windowW, int windowH, int pictureW, int pictureH, int canvasW, int canvasH, double safe = 1.0);
 
 // The presses' rows must be this far apart (units) to give a height.
 inline constexpr int kMinRowSpan = 300;
@@ -119,16 +125,18 @@ inline constexpr int kMinRowSpan = 300;
 // from side to side. Centred across the window.
 ClickMap LearnMap(const ClickMap& guess, int windowW, int windowH, const std::vector<ClickSample>& samples);
 
-// What the presses are kept apart by: the window, the game's picture and the
-// client-size query's answer (0 = unknown). A menu laid out square and the
-// same window's menu laid out as a 16:9 band are different maps.
+// What the presses are kept apart by: the window, the game's picture, the
+// client-size query's answer (0 = unknown) and the safe area's percent. A menu
+// laid out square and the same window's menu laid out as a 16:9 band are
+// different maps.
 struct MapKey {
-	int windowW = 0, windowH = 0, pictureW = 0, pictureH = 0, canvasW = 0, canvasH = 0;
+	int windowW = 0, windowH = 0, pictureW = 0, pictureH = 0, canvasW = 0, canvasH = 0, safePercent = 100;
 	bool operator==(const MapKey&) const = default;
 };
 // d2r-rooms-clicks.txt: one press a line, "windowW windowH pictureW pictureH
-// canvasW canvasH px py x y". Lines of 0.9.12 and older (6 numbers, keyed by
-// the window alone) are dropped: they mixed both layouts.
+// canvasW canvasH safePercent px py x y". Lines of 0.9.12 and older (6
+// numbers, keyed by the window alone) and of 0.9.13 (10, no safe area) are
+// dropped: they mixed layouts.
 struct KeyedSample {
 	MapKey key;
 	ClickSample sample;

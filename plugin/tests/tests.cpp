@@ -461,16 +461,65 @@ void TestBand() {
 	const ClickMap twoRows = LearnMap(guess, 1280, 1280, {bandPress("ShowHost", 20, 25), bandPress("CreateGame", 0, -15), bandPress("ShowBrowse", 0, 0)});
 	CHECK(std::abs(twoRows.ky - 1.0 / 3) < 0.02 && std::abs(twoRows.top) < 15 && std::abs(twoRows.kx - 1.0 / 3) < 0.02);
 
-	// The presses are kept per window, picture and query answer.
-	const MapKey squareKey {1280, 1280, 1280, 1280, 1280, 1280}, bandKey {1280, 1280, 1280, 1280, 1280, 720};
-	const MapKey squareAgain {1280, 1280, 1280, 1280, 1280, 1280};
-	CHECK(!(squareKey == bandKey) && squareKey == squareAgain);
-	const std::vector<KeyedSample> kept {{squareKey, {928.5, 464, -125, 342}}, {bandKey, {600, 114, -6, 1510}}};
+	// The presses are kept per window, picture, query answer and safe area.
+	const MapKey squareKey {1280, 1280, 1280, 1280, 1280, 1280, 100}, bandKey {1280, 1280, 1280, 1280, 1280, 720, 100};
+	const MapKey squareAgain {1280, 1280, 1280, 1280, 1280, 1280, 100}, squareSafe80 {1280, 1280, 1280, 1280, 1280, 1280, 80};
+	CHECK(!(squareKey == bandKey) && squareKey == squareAgain && !(squareKey == squareSafe80));
+	const std::vector<KeyedSample> kept {{squareKey, {928.5, 464, -125, 342}}, {bandKey, {600, 114, -6, 1510}}, {squareSafe80, {1, 2, 3, 4}}};
 	const std::vector<KeyedSample> read = ParseClickSamples(ClickSamplesText(kept));
-	CHECK(read.size() == 2 && read[0].key == squareKey && read[1].key == bandKey && read[0].sample.px == 928.5 && read[1].sample.y == 1510);
-	// 0.9.12's lines (the window alone) and junk are dropped.
+	CHECK(read.size() == 3 && read[0].key == squareKey && read[1].key == bandKey && read[2].key == squareSafe80 && read[0].sample.px == 928.5 &&
+	      read[1].sample.y == 1510);
+	// 0.9.12's lines (the window alone), 0.9.13's (no safe area) and junk are dropped.
 	CHECK(ParseClickSamples("1280 1280 928 464 -125 342\r\n1920 1920 1031 457 114 342\n").empty());
-	CHECK(ParseClickSamples("x y\n0 0 0 0 0 0 1 2 3 4\n1280 1280 0 0 0 0 1 2 3 4\r\n").size() == 1);
+	CHECK(ParseClickSamples("1920 1920 1920 1920 1920 1080 1028 243 114 342\n").empty());
+	CHECK(ParseClickSamples("x y\n0 0 0 0 0 0 100 1 2 3 4\n1280 1280 0 0 0 0 100 1 2 3 4\r\n").size() == 1);
+}
+
+// The game's "Safe Screen Percent" (Serg's Settings.json, 2026-11-27: 80) draws
+// the whole interface that much smaller round the middle. 0.9.13 left it out:
+// on his 1920x1920 window with the 1920x1080 band it hit-tested at 0.5 px a
+// unit from the top, while the game drew at 0.4 from 108 px, and the D2R Rooms
+// tab missed.
+void TestSafeArea() {
+	const std::string serg = "{\"Screen Resolution (Windowed)\": \"1920x1920\", \"Safe Screen Percent\": 80, \"Window Mode\": 0}";
+	const std::string none = "{\"Window Mode\": 0}", low = "{\"Safe Screen Percent\": 10}", high = "{\"Safe Screen Percent\": 150}";
+	CHECK(SafeShare(serg) == 0.8);
+	CHECK(SafeShare(none) == 1.0);
+	CHECK(SafeShare("not json") == 1.0);
+	CHECK(SafeShare(low) == 0.5);
+	CHECK(SafeShare(high) == 1.0);
+
+	const ClickMap band = BandMap(1920, 1920, 1920, 1920, 1920, 1080, 0.8);
+	CHECK(std::abs(band.kx - 0.4) < 1e-9 && std::abs(band.ky - 0.4) < 1e-9 && band.cx == 960 && std::abs(band.top - 108) < 1e-9);
+	CHECK(BandMap(1920, 1920, 1920, 1920, 1920, 1080).ky == 0.5);  // 100 %: as 0.9.13
+	const ClickMap pic = PictureMap(1920, 1080, 0, 0, 0.8);
+	CHECK(std::abs(pic.kx - 0.4) < 1e-9 && std::abs(pic.top - (540 - 1080 * 0.4)) < 1e-9);
+
+	// His log, 11:14-11:16: every click he aimed at the D2R Rooms tab is on it.
+	const HitArea tab = TabHitAreas()[0];
+	const auto onTab = [&](const ClickMap& map, double px, double py) {
+		const LayoutPoint p = ToLayout(map, px, py);
+		return p.x >= tab.x && p.x < tab.x + tab.width && p.y >= tab.y && p.y < tab.y + tab.height;
+	};
+	const std::vector<std::pair<int, int>> aimed {{1255, 204}, {1248, 206}, {1217, 206}, {1256, 201}, {1259, 199}, {1267, 190}, {1252, 200}, {1244, 208},
+	                                              {1226, 207}, {1231, 213}, {1227, 220}, {1224, 205}, {1213, 197}, {1209, 205}, {1198, 205}};
+	int missed = 0;
+	for (const auto& [px, py] : aimed) {
+		CHECK(onTab(band, px, py));
+		missed += !onTab(BandMap(1920, 1920, 1920, 1920, 1920, 1080), px, py);
+	}
+	CHECK(missed == static_cast<int>(aimed.size()));  // 0.9.13's map missed them all
+	// ...and D2RLoader's own HOST GAME / BROWSE GAMES presses, which the game
+	// took, are on those tabs (MainTabs 282..403; a tab about 230 wide).
+	const std::vector<std::pair<int, int>> host {{923, 226}, {923, 228}, {934, 233}}, browse {{979, 258}, {1028, 243}, {1013, 263}};
+	for (const auto& [px, py] : host) {
+		const LayoutPoint p = ToLayout(band, px, py);
+		CHECK(p.y >= 282 && p.y < 403 && std::abs(p.x - LoaderTarget("ShowHost")->x) < 115);
+	}
+	for (const auto& [px, py] : browse) {
+		const LayoutPoint p = ToLayout(band, px, py);
+		CHECK(p.y >= 282 && p.y < 403 && std::abs(p.x - LoaderTarget("ShowBrowse")->x) < 115);
+	}
 }
 
 // The game's client-size query found in D2R.exe's code, as it is and with a
@@ -656,6 +705,7 @@ int main(int argc, char** argv) {
 	TestLayout();
 	TestToLayout();
 	TestBand();
+	TestSafeArea();
 	TestClientSizeQuery();
 	TestPlayerCount();
 	TestRelay();

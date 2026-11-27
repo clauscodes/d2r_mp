@@ -15,7 +15,7 @@ Runs free on Cloudflare Workers + D1. Design: [SPEC.md](SPEC.md).
 ## Install the plugin (players)
 
 **Download: [d2rl-d2r-rooms.dll](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll)**
-(plugin 0.9.13, Windows x64, [SHA-256](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll.sha256);
+(plugin 0.9.14, Windows x64, [SHA-256](https://github.com/clauscodes/d2r_mp/raw/main/download/d2rl-d2r-rooms.dll.sha256);
 sample settings: [d2r-rooms.ini](https://github.com/clauscodes/d2r_mp/raw/main/download/d2r-rooms.ini)).
 Open rooms: <https://d2r-rooms.d2r-rooms.workers.dev/>.
 
